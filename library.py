@@ -103,14 +103,14 @@ class LibraryIndex:
             if not dup.exists():
                 self._dirty = True
                 continue
-            if self._same_inode(primary, dup):
+            if not dup.is_symlink() and self._same_inode(primary, dup):
                 healed.append(rel)
                 continue
 
             try:
                 dup.unlink()
                 link_track(primary, dup)
-                if self._same_inode(primary, dup):
+                if self._same_inode(primary, dup) and not dup.is_symlink():
                     healed.append(rel)
                     self._healed += 1
                     self._dirty = True

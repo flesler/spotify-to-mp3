@@ -1,5 +1,6 @@
 """Tests for library index"""
 
+import os
 import subprocess
 
 from library import LibraryIndex, get_txxx
@@ -198,6 +199,27 @@ def test_heal_paths_merges_duplicates(tmp_path):
 
     assert len(healed) == 2
     assert primary.stat().st_ino == duplicate.stat().st_ino
+
+
+def test_heal_paths_converts_symlink_to_hardlink(tmp_path):
+    music_dir = tmp_path / "Music"
+    a_dir = music_dir / "A"
+    b_dir = music_dir / "B"
+    a_dir.mkdir(parents=True)
+    b_dir.mkdir(parents=True)
+    primary = a_dir / "song.mp3"
+    symlink = b_dir / "song.mp3"
+    primary.write_bytes(b"same")
+    os.symlink(os.path.relpath(primary, b_dir), symlink)
+
+    index = LibraryIndex(music_dir)
+    index._hardlinks_ok = True
+    healed = index._heal_paths([str(primary.relative_to(music_dir)), str(symlink.relative_to(music_dir))])
+
+    assert len(healed) == 2
+    assert not symlink.is_symlink()
+    assert primary.stat().st_ino == symlink.stat().st_ino
+    assert index._healed == 1
 
 
 def test_untagged_grouped_by_filename_in_build(tmp_path):
