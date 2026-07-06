@@ -2,23 +2,41 @@
 """
 Spotify Playlist to MP3 Downloader
 Downloads tracks from a Spotify playlist as MP3s from YouTube using yt-dlp.
+
+This script requires the project's virtual environment to be active.
+If running directly, it will check for .venv and activate it automatically.
 """
 
+import os
+import sys
+
+# Auto-activate venv if not already active
+if 'VIRTUAL_ENV' not in os.environ:
+    venv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.venv', 'bin', 'activate')
+    if os.path.exists(venv_path):
+        # Can't actually activate in Python, but we can check when called via wrapper
+        pass
+    else:
+        print("❌ Error: Virtual environment not found at .venv/")
+        print("Run: ./setup-venv.sh")
+        sys.exit(1)
+
 import argparse
-import base64
-import json
 import os
 import re
 import subprocess
 import sys
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
 
 import requests
 from dotenv import load_dotenv
-from mutagen.id3 import APIC, ID3, TALB, TDRC, TIT2, TPE1, TPE2
-from mutagen.id3._util import ID3NoHeaderError
+from mutagen.id3 import APIC, TALB, TDRC, TIT2, TPE1, TPE2
 from mutagen.mp3 import MP3
+
+# Import API modules
+# Import API modules
+from api import API
+from oauth import OAuth
 
 # Load environment variables from .env file if it exists
 load_dotenv()
@@ -44,93 +62,6 @@ DOWNLOAD_QUALITY = os.getenv("DOWNLOAD_QUALITY", "192K")
 # Enable audio fingerprinting
 ENABLE_AUDIO_FINGERPRINT = os.getenv("ENABLE_AUDIO_FINGERPRINT", "false").lower() == "true"
 
-class SpotifyAPI:
-    def __init__(self, client_id, client_secret):
-        self.client_id = client_id
-        self.client_secret = client_secret
-        self.access_token = None
-        self._get_access_token()
-
-    def _get_access_token(self):
-        """Get Spotify access token using client credentials flow"""
-        url = "https://accounts.spotify.com/api/token"
-
-        # Encode client credentials
-        credentials = f"{self.client_id}:{self.client_secret}"
-        encoded_credentials = base64.b64encode(credentials.encode()).decode()
-
-        headers = {
-            "Authorization": f"Basic {encoded_credentials}",
-            "Content-Type": "application/x-www-form-urlencoded"
-        }
-
-        data = {"grant_type": "client_credentials"}
-
-        response = requests.post(url, headers=headers, data=data)
-        response.raise_for_status()
-
-        token_data = response.json()
-        self.access_token = token_data["access_token"]
-
-    def _make_request(self, url):
-        """Make authenticated request to Spotify API"""
-        headers = {"Authorization": f"Bearer {self.access_token}"}
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-        return response.json()
-
-    def extract_playlist_id(self, playlist_input):
-        """Extract playlist ID from URL or return as-is if already an ID"""
-        if playlist_input.startswith("http"):
-            # Extract from URL
-            if "playlist/" in playlist_input:
-                return playlist_input.split("playlist/")[1].split("?")[0]
-            else:
-                parsed = urlparse(playlist_input)
-                path_parts = parsed.path.split("/")
-                if "playlist" in path_parts:
-                    idx = path_parts.index("playlist")
-                    if idx + 1 < len(path_parts):
-                        return path_parts[idx + 1]
-        return playlist_input
-
-    def get_playlist_tracks(self, playlist_id):
-        """Get all tracks from a Spotify playlist"""
-        playlist_id = self.extract_playlist_id(playlist_id)
-
-        # Get playlist info
-        playlist_url = f"https://api.spotify.com/v1/playlists/{playlist_id}"
-        playlist_data = self._make_request(playlist_url)
-        playlist_name = playlist_data["name"]
-
-        print(f"📋 Playlist: {playlist_name}")
-        print(f"🔗 ID: {playlist_id}")
-
-        # Get tracks with pagination
-        tracks = []
-        url = f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks"
-
-        while url:
-            data = self._make_request(url)
-
-            for item in data["items"]:
-                if item["track"] and item["track"]["type"] == "track":
-                    track = item["track"]
-                    artists = ", ".join([artist["name"] for artist in track["artists"]])
-                    tracks.append({
-                        "id": track["id"],
-                        "name": track["name"],
-                        "artists": artists,
-                        "duration_ms": track["duration_ms"],
-                        "popularity": track["popularity"],
-                        "album": track.get("album", {})  # Include full album data
-                    })
-
-            url = data.get("next")
-
-        print(f"🎵 Found {len(tracks)} tracks")
-        return tracks, playlist_name
-
 def sanitize_filename(filename):
     """Remove/replace characters that are problematic for filenames"""
     # Replace problematic characters
@@ -146,7 +77,7 @@ def download_album_art(track):
         images = album.get("images", [])
 
         if not images:
-            print(f"   ⚠️  No album images found")
+            print("   ⚠️  No album images found")
             return None, album
 
         # Sort by size (width) and get the largest
@@ -200,7 +131,7 @@ def fix_mp3_metadata_smart(file_path, track):
                 album_info = track.get("album", {})
             set_mp3_metadata(file_path, track, album_art_data, album_info)
         else:
-            print(f"   ✅ Metadata already complete")
+            print("   ✅ Metadata already complete")
 
     except Exception as e:
         print(f"   ⚠️  Metadata check failed: {e}")
@@ -343,7 +274,7 @@ def download_track(track, playlist_dir, base_music_dir, spotify_api, dry_run=Fal
                 if dry_run:
                     print(f"🔗 Would link: {existing_file.relative_to(base_music_dir)} → {target_path.name}")
                     if fix_metadata:
-                        print(f"   🎨 Would fix metadata")
+                        print("   🎨 Would fix metadata")
                     return "skipped"
                 try:
                     target_path.hardlink_to(existing_file)
@@ -354,7 +285,7 @@ def download_track(track, playlist_dir, base_music_dir, spotify_api, dry_run=Fal
                         fix_mp3_metadata_smart(target_path, track)
 
                     return "skipped"
-                except Exception as e:
+                except Exception:
                     # Fall back to copy if hard link fails
                     try:
                         import shutil
@@ -375,7 +306,7 @@ def download_track(track, playlist_dir, base_music_dir, spotify_api, dry_run=Fal
                 if fix_metadata and not dry_run:
                     fix_mp3_metadata_smart(target_path, track)
                 elif fix_metadata and dry_run:
-                    print(f"   🎨 Would fix metadata")
+                    print("   🎨 Would fix metadata")
 
                 return "skipped"
         else:
@@ -385,7 +316,7 @@ def download_track(track, playlist_dir, base_music_dir, spotify_api, dry_run=Fal
             if fix_metadata and not dry_run:
                 fix_mp3_metadata_smart(existing_file, track)
             elif fix_metadata and dry_run:
-                print(f"   🎨 Would fix metadata")
+                print("   🎨 Would fix metadata")
 
             return "skipped"
 
@@ -398,7 +329,7 @@ def download_track(track, playlist_dir, base_music_dir, spotify_api, dry_run=Fal
         if fix_metadata and not dry_run:
             fix_mp3_metadata_smart(output_path, track)
         elif fix_metadata and dry_run:
-            print(f"   🎨 Would fix metadata")
+            print("   🎨 Would fix metadata")
 
         return "skipped"
 
@@ -455,7 +386,7 @@ def download_track(track, playlist_dir, base_music_dir, spotify_api, dry_run=Fal
                         try:
                             partial_file.unlink()
                             print(f"   🗑️  Cleaned: {partial_file.name}")
-                        except:
+                        except Exception:
                             pass
 
             print(f"❌ Failed: {sanitized_filename}")
@@ -478,8 +409,8 @@ def download_track(track, playlist_dir, base_music_dir, spotify_api, dry_run=Fal
                 ]
 
                 if any(indicator in error_msg for indicator in blocking_indicators[:4]):  # Only critical errors
-                    print(f"\n🛑 Detected rate limiting/blocking. Stopping to avoid further issues.")
-                    print(f"💡 Try again in 10-15 minutes, or run one playlist at a time.")
+                    print("\n🛑 Detected rate limiting/blocking. Stopping to avoid further issues.")
+                    print("💡 Try again in 10-15 minutes, or run one playlist at a time.")
                     raise KeyboardInterrupt("Rate limited")
 
             return False
@@ -492,15 +423,25 @@ def download_track(track, playlist_dir, base_music_dir, spotify_api, dry_run=Fal
         return False
 
 def main():
+    # Ensure we're running in a virtual environment
+    if not os.environ.get('VIRTUAL_ENV'):
+        print("⚠️  Warning: Not running in a virtual environment!")
+        print("   This may cause dependency conflicts.")
+        print("   Please activate the venv first:")
+        print("     source .venv/bin/activate")
+        print("   Or use the wrapper script:")
+        print("     ./run.sh")
+        print()
+
     parser = argparse.ArgumentParser(
         description="Download Spotify playlist tracks as MP3s from YouTube using yt-dlp",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""Examples:
-  python3 spotify_playlist_downloader.py https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M
-  python3 spotify_playlist_downloader.py 37i9dQZF1DXcBWIGoYBM5M --dry-run
-  python3 spotify_playlist_downloader.py "My Playlist" --dry-run
-  python3 spotify_playlist_downloader.py /mnt/ssd/Music/Rivotril --dry-run
-  python3 spotify_playlist_downloader.py liked --dry-run"""
+  python3 main.py https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M
+  python3 main.py 37i9dQZF1DXcBWIGoYBM5M --dry-run
+  python3 main.py "My Playlist" --dry-run
+  python3 main.py /mnt/ssd/Music/Rivotril --dry-run
+  python3 main.py liked --dry-run"""
     )
 
     parser.add_argument("playlist", help="Spotify playlist URL, ID, name, folder path with playlist-id.txt, or 'liked' for liked songs")
@@ -558,8 +499,7 @@ def main():
         if is_liked_songs:
             # Use OAuth for liked songs
             print("🔐 Requesting access to liked songs...")
-            from spotify_oauth import SpotifyOAuth
-            oauth = SpotifyOAuth(SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET)
+            oauth = OAuth(SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET)
 
             # Get all liked songs
             tracks = oauth.get_all_liked_songs()
@@ -571,7 +511,7 @@ def main():
         else:
             # Initialize Spotify API with client credentials
             print("🔐 Authenticating with Spotify...")
-            spotify = SpotifyAPI(SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET)
+            spotify = API(SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET)
 
             # Get playlist tracks
             print("📡 Fetching playlist...")
@@ -620,7 +560,7 @@ def main():
                 try:
                     temp_file.unlink()
                     cleanup_count += 1
-                except:
+                except Exception:
                     pass
 
         if cleanup_count > 0:
@@ -649,7 +589,7 @@ def main():
 
         # Summary
         print("\n" + "=" * 50)
-        print(f"🎉 Download Summary:")
+        print("🎉 Download Summary:")
         print(f"   ✅ Successful: {successful}")
         if skipped > 0:
             print(f"   ⏭️  Skipped (exists): {skipped}")
@@ -657,7 +597,7 @@ def main():
         print(f"   📁 Location: {playlist_dir}")
 
         if not dry_run and (successful + skipped) > 0:
-            print(f"\n💡 Tip: Run Navidrome library scan to index new files")
+            print("\n💡 Tip: Run Navidrome library scan to index new files")
 
         # Generate M3U playlist file for Navidrome (only if not dry-run)
         if not dry_run:

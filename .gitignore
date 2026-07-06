@@ -31,3 +31,6 @@ Music/
 
 # Logs
 *.log
+-e 
+# Direnv
+.direnv/

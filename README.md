@@ -46,40 +46,49 @@ pip install yt-dlp
 
 ## Usage
 
+### Option 1: Using the wrapper script (recommended)
+
+```bash
+# Automatically uses the project's virtual environment
+./run.sh <playlist_url_or_id> [options]
+```
+
+### Option 2: Manual activation
+
 ```bash
 # Activate virtual environment first
 source .venv/bin/activate
 
 # Download a playlist
-python spotify_playlist_downloader.py <playlist_url_or_id> [options]
+python main.py <playlist_url_or_id> [options]
 ```
 
 ### Examples
 
 ```bash
 # Download a playlist
-python spotify_playlist_downloader.py https://open.spotify.com/playlist/37i9p40INhoKS8ORvUy5VQ
+python main.py https://open.spotify.com/playlist/37i9p40INhoKS8ORvUy5VQ
 
 # Download your liked/saved songs (requires OAuth authentication)
-python spotify_playlist_downloader.py liked
+python main.py liked
 
 # Export track list without downloading
-python spotify_playlist_downloader.py <playlist_url> --export
+python main.py <playlist_url> --export
 
 # Dry run - see what would be downloaded
-python spotify_playlist_downloader.py <playlist_url> --dry-run
+python main.py <playlist_url> --dry-run
 
 # Test with first 3 tracks
-python spotify_playlist_downloader.py <playlist_url> --limit 3
+python main.py <playlist_url> --limit 3
 
 # Disable auto-renaming
-python spotify_playlist_downloader.py <playlist_url> --no-rename
+python main.py <playlist_url> --no-rename
 
 # Disable hard linking (copy instead)
-python spotify_playlist_downloader.py <playlist_url> --no-link
+python main.py <playlist_url> --no-link
 
 # Disable metadata fixing
-python spotify_playlist_downloader.py <playlist_url> --no-fix-metadata
+python main.py <playlist_url> --no-fix-metadata
 ```
 
 ### Options
@@ -168,7 +177,7 @@ When downloading your liked/saved songs, the script will:
 3. Save a refresh token at `~/.config/spotify-to-mp3/token.json`
 4. Automatically use cached tokens on subsequent runs
 
-No extra setup needed - just run `python spotify_playlist_downloader.py liked`
+No extra setup needed - just run `python main.py liked`
 
 ## Navidrome Integration
 

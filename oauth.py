@@ -11,13 +11,16 @@ import os
 import secrets
 import socketserver
 import string
+import time
 import webbrowser
 from pathlib import Path
 from threading import Thread
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode, urlparse
+
+import requests
 
 
-class SpotifyOAuth:
+class OAuth:
     """Handle Spotify OAuth 2.0 authentication for user-specific endpoints"""
 
     def __init__(self, client_id, client_secret, redirect_uri="http://localhost:8888/callback"):
@@ -62,7 +65,6 @@ class SpotifyOAuth:
             def do_GET(self):
                 if self.path.startswith('/callback'):
                     # Extract authorization code from query params
-                    from urllib.parse import parse_qs, urlparse
                     parsed = urlparse(self.path)
                     params = parse_qs(parsed.query)
 
@@ -115,7 +117,7 @@ class SpotifyOAuth:
         auth_url = self._get_auth_url(code_challenge, state)
 
         # Open browser for user authentication
-        print(f"Opening browser for Spotify authentication...")
+        print("Opening browser for Spotify authentication...")
         print(f"If browser doesn't open, visit: {auth_url}")
         webbrowser.open(auth_url)
 
@@ -125,7 +127,6 @@ class SpotifyOAuth:
             httpd, handler_class = self._start_local_server(port)
 
             # Wait for callback (with timeout)
-            import time
             timeout = 120  # 2 minutes
             start_time = time.time()
 
@@ -152,8 +153,6 @@ class SpotifyOAuth:
 
     def _exchange_code_for_token(self, code, code_verifier):
         """Exchange authorization code for access token"""
-        import requests
-
         url = "https://accounts.spotify.com/api/token"
 
         credentials = f"{self.client_id}:{self.client_secret}"
@@ -178,8 +177,6 @@ class SpotifyOAuth:
 
     def _refresh_token(self, refresh_token):
         """Refresh an expired access token"""
-        import requests
-
         url = "https://accounts.spotify.com/api/token"
 
         credentials = f"{self.client_id}:{self.client_secret}"
@@ -221,8 +218,6 @@ class SpotifyOAuth:
 
     def _is_token_expired(self, token_data):
         """Check if token is expired or about to expire"""
-        import time
-
         expires_at = token_data.get('expires_at', 0)
         current_time = time.time()
 
@@ -231,8 +226,6 @@ class SpotifyOAuth:
 
     def get_liked_songs(self, limit=50, offset=0):
         """Get user's liked/saved tracks"""
-        import requests
-
         access_token = self.authenticate()
 
         url = "https://api.spotify.com/v1/me/tracks"

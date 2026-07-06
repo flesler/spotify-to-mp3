@@ -1,0 +1,20 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.11.0
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+  - repo: https://github.com/DetachHead/basedpyright-pre-commit-mirror
+    rev: 1.39.9
+    hooks:
+      - id: basedpyright
+  - repo: local
+    hooks:
+      - id: pytest
+        name: pytest
+        entry: pytest
+        language: python
+        additional_dependencies: [pytest>=7]
+        pass_filenames: false
+        always_run: true
