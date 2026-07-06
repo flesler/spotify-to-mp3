@@ -1,0 +1,26 @@
+[tool.basedpyright]
+typeCheckingMode = "basic"
+reportMissingParameterType = "none"
+reportUnknownParameterType = "none"
+reportUnknownVariableType = "none"
+reportUnknownMemberType = "none"
+reportUnknownArgumentType = "none"
+reportAny = "none"
+reportUnannotatedClassAttribute = "none"
+reportDuplicateImport = "warning"
+reportConstantRedefinition = "none"
+reportUnnecessaryCast = "warning"
+reportUnusedCallResult = "none"
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.format]
+skip-magic-trailing-comma = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"

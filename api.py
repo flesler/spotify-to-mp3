@@ -25,10 +25,7 @@ class API:
         credentials = f"{self.client_id}:{self.client_secret}"
         encoded_credentials = base64.b64encode(credentials.encode()).decode()
 
-        headers = {
-            "Authorization": f"Basic {encoded_credentials}",
-            "Content-Type": "application/x-www-form-urlencoded"
-        }
+        headers = {"Authorization": f"Basic {encoded_credentials}", "Content-Type": "application/x-www-form-urlencoded"}
 
         data = {"grant_type": "client_credentials"}
 
@@ -53,6 +50,7 @@ class API:
                 return playlist_input.split("playlist/")[1].split("?")[0]
             else:
                 from urllib.parse import urlparse
+
                 parsed = urlparse(playlist_input)
                 path_parts = parsed.path.split("/")
                 if "playlist" in path_parts:
@@ -84,14 +82,16 @@ class API:
                 if item["track"] and item["track"]["type"] == "track":
                     track = item["track"]
                     artists = ", ".join([artist["name"] for artist in track["artists"]])
-                    tracks.append({
-                        "id": track["id"],
-                        "name": track["name"],
-                        "artists": artists,
-                        "duration_ms": track["duration_ms"],
-                        "popularity": track["popularity"],
-                        "album": track.get("album", {})  # Include full album data
-                    })
+                    tracks.append(
+                        {
+                            "id": track["id"],
+                            "name": track["name"],
+                            "artists": artists,
+                            "duration_ms": track["duration_ms"],
+                            "popularity": track["popularity"],
+                            "album": track.get("album", {}),  # Include full album data
+                        }
+                    )
 
             url = data.get("next")
 

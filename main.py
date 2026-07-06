@@ -11,8 +11,8 @@ import os
 import sys
 
 # Auto-activate venv if not already active
-if 'VIRTUAL_ENV' not in os.environ:
-    venv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.venv', 'bin', 'activate')
+if "VIRTUAL_ENV" not in os.environ:
+    venv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".venv", "bin", "activate")
     if os.path.exists(venv_path):
         # Can't actually activate in Python, but we can check when called via wrapper
         pass
@@ -50,7 +50,7 @@ if not SPOTIFY_CLIENT_ID or not SPOTIFY_CLIENT_SECRET:
     sys.exit(1)
 
 # Download directory (required)
-MUSIC_DIR = os.getenv("MUSIC_DIR")
+MUSIC_DIR: str = os.getenv("MUSIC_DIR") or ""
 
 if not MUSIC_DIR:
     print("❌ Error: MUSIC_DIR must be set in .env file")
@@ -66,16 +66,15 @@ ENABLE_AUDIO_FINGERPRINT = os.getenv("ENABLE_AUDIO_FINGERPRINT", "false").lower(
 # Fuzzy matching threshold (0-100, higher = stricter)
 FUZZY_MATCH_THRESHOLD = 85
 
-# Fuzzy matching threshold (0-100, higher = stricter)
-FUZZY_MATCH_THRESHOLD = 85
 
 def sanitize_filename(filename):
     """Remove/replace characters that are problematic for filenames"""
     # Replace problematic characters
-    filename = re.sub(r'[<>:"/\\|?*]', '', filename)
-    filename = re.sub(r'[^\w\s\-_\(\)\[\].]', '', filename)
-    filename = re.sub(r'\s+', ' ', filename).strip()
+    filename = re.sub(r'[<>:"/\\|?*]', "", filename)
+    filename = re.sub(r"[^\w\s\-_\(\)\[\].]", "", filename)
+    filename = re.sub(r"\s+", " ", filename).strip()
     return filename
+
 
 def compute_audio_fingerprint(filepath):
     """Compute audio fingerprint using Chromaprint/AcoustID"""
@@ -87,12 +86,7 @@ def compute_audio_fingerprint(filepath):
         import subprocess
 
         # Check if fpcalc is available
-        result = subprocess.run(
-            ["fpcalc", "-json", str(filepath)],
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
+        result = subprocess.run(["fpcalc", "-json", str(filepath)], capture_output=True, text=True, timeout=30)
 
         if result.returncode == 0:
             data = json.loads(result.stdout)
@@ -102,14 +96,15 @@ def compute_audio_fingerprint(filepath):
             return None
     except FileNotFoundError:
         # Use a module-level flag to avoid spamming the warning
-        if not globals().get('_FPCALC_WARNED', False):
+        if not globals().get("_FPCALC_WARNED", False):
             print("   ⚠️  Audio fingerprinting disabled (fpcalc not found)")
             print("   💡 Install with: sudo apt install fpcalc")
-            globals()['_FPCALC_WARNED'] = True
+            globals()["_FPCALC_WARNED"] = True
         return None
     except Exception as e:
         print(f"   ⚠️  Fingerprint computation failed: {e}")
         return None
+
 
 def fuzzy_match_filenames(spotify_name, existing_name):
     """Check if two filenames likely refer to the same song using fuzzy matching"""
@@ -119,10 +114,10 @@ def fuzzy_match_filenames(spotify_name, existing_name):
     def normalize(s):
         s = s.lower()
         # Remove common variations
-        s = re.sub(r'\s*\(.*?\)', '', s)  # Remove parentheses content (remix, etc)
-        s = re.sub(r'\s*feat\.?\s+\S+', '', s, flags=re.IGNORECASE)  # Remove feat. artist
-        s = re.sub(r'[^a-z0-9\s]', '', s)  # Remove special chars
-        s = re.sub(r'\s+', ' ', s).strip()
+        s = re.sub(r"\s*\(.*?\)", "", s)  # Remove parentheses content (remix, etc)
+        s = re.sub(r"\s*feat\.?\s+\S+", "", s, flags=re.IGNORECASE)  # Remove feat. artist
+        s = re.sub(r"[^a-z0-9\s]", "", s)  # Remove special chars
+        s = re.sub(r"\s+", " ", s).strip()
         return s
 
     norm_spotify = normalize(spotify_name)
@@ -132,6 +127,7 @@ def fuzzy_match_filenames(spotify_name, existing_name):
     similarity = SequenceMatcher(None, norm_spotify, norm_existing).ratio() * 100
 
     return similarity >= FUZZY_MATCH_THRESHOLD
+
 
 def download_album_art(track):
     """Download album artwork using data already from playlist API"""
@@ -162,6 +158,7 @@ def download_album_art(track):
 
     return None, track.get("album", {})
 
+
 def fix_mp3_metadata_smart(file_path, track):
     """Intelligently fix MP3 metadata only if needed"""
     try:
@@ -179,9 +176,7 @@ def fix_mp3_metadata_smart(file_path, track):
         artwork = audio.tags.getall("APIC")  # Get all APIC frames
 
         needs_metadata = (
-            not title or str(title[0]) != track["name"] or
-            not artist or str(artist[0]) != track["artists"] or
-            not album
+            not title or str(title[0]) != track["name"] or not artist or str(artist[0]) != track["artists"] or not album
         )
 
         needs_artwork = not artwork or len(artwork) == 0
@@ -202,6 +197,7 @@ def fix_mp3_metadata_smart(file_path, track):
         album_art_data, album_info = download_album_art(track)
         set_mp3_metadata(file_path, track, album_art_data, album_info)
 
+
 def set_mp3_metadata(file_path, track, album_art_data=None, album_info=None):
     """Set proper ID3 tags on MP3 file"""
     try:
@@ -212,34 +208,40 @@ def set_mp3_metadata(file_path, track, album_art_data=None, album_info=None):
         if audio.tags is None:
             audio.add_tags()
 
+        # Type assertion: tags are guaranteed to exist after add_tags()
+        assert audio.tags is not None
+        tags = audio.tags
+
         # Update/set basic metadata (overwrite existing)
-        audio.tags.setall("TIT2", [TIT2(encoding=3, text=track["name"])])  # Title
-        audio.tags.setall("TPE1", [TPE1(encoding=3, text=track["artists"])])  # Artist
-        audio.tags.setall("TPE2", [TPE2(encoding=3, text=track["artists"])])  # Album Artist
+        tags.setall("TIT2", [TIT2(encoding=3, text=track["name"])])  # Title
+        tags.setall("TPE1", [TPE1(encoding=3, text=track["artists"])])  # Artist
+        tags.setall("TPE2", [TPE2(encoding=3, text=track["artists"])])  # Album Artist
 
         # Set album info if available
         if album_info:
             album_name = album_info.get("name", "Unknown Album")
-            audio.tags.setall("TALB", [TALB(encoding=3, text=album_name)])  # Album
+            tags.setall("TALB", [TALB(encoding=3, text=album_name)])  # Album
 
             # Release date
             release_date = album_info.get("release_date", "")
             if release_date:
                 year = release_date.split("-")[0]
-                audio.tags.setall("TDRC", [TDRC(encoding=3, text=year)])  # Year
+                tags.setall("TDRC", [TDRC(encoding=3, text=year)])  # Year
 
         # Embed album artwork (replace existing)
         if album_art_data:
             # Remove existing artwork
-            audio.tags.delall("APIC")
+            tags.delall("APIC")
             # Add new artwork
-            audio.tags.add(APIC(
-                encoding=3,  # UTF-8
-                mime='image/jpeg',  # JPEG image
-                type=3,  # Cover (front)
-                desc='Cover',
-                data=album_art_data
-            ))
+            tags.add(
+                APIC(
+                    encoding=3,  # UTF-8
+                    mime="image/jpeg",  # JPEG image
+                    type=3,  # Cover (front)
+                    desc="Cover",
+                    data=album_art_data,
+                )
+            )
 
         # Save the tags
         audio.save()
@@ -258,6 +260,7 @@ def set_mp3_metadata(file_path, track, album_art_data=None, album_info=None):
     except Exception as e:
         print(f"   ⚠️  Metadata update failed: {e}")
         return False
+
 
 def check_if_track_exists(artists, title, base_music_dir, auto_rename=True, duration_ms=None):
     """Check if a track already exists anywhere in the music directory
@@ -362,7 +365,10 @@ def check_if_track_exists(artists, title, base_music_dir, auto_rename=True, dura
 
     return mp3_file
 
-def download_track(track, playlist_dir, base_music_dir, spotify_api, dry_run=False, auto_rename=True, auto_link=True, fix_metadata=True):
+
+def download_track(
+    track, playlist_dir, base_music_dir, spotify_api, dry_run=False, auto_rename=True, auto_link=True, fix_metadata=True
+):
     """Download a single track using yt-dlp"""
     artists = track["artists"]
     title = track["name"]
@@ -397,6 +403,7 @@ def download_track(track, playlist_dir, base_music_dir, spotify_api, dry_run=Fal
                     # Fall back to copy if hard link fails
                     try:
                         import shutil
+
                         shutil.copy2(existing_file, target_path)
                         print(f"📋 Copied: {existing_file.relative_to(base_music_dir)} → {target_path.name}")
 
@@ -453,15 +460,22 @@ def download_track(track, playlist_dir, base_music_dir, spotify_api, dry_run=Fal
             "yt-dlp",
             f"ytsearch1:{search_query}",  # Search for 1 result
             "--extract-audio",
-            "--audio-format", "mp3",
-            "--audio-quality", DOWNLOAD_QUALITY,
-            "--output", str(playlist_dir) + "/" + sanitized_filename + ".%(ext)s",
+            "--audio-format",
+            "mp3",
+            "--audio-quality",
+            DOWNLOAD_QUALITY,
+            "--output",
+            str(playlist_dir) + "/" + sanitized_filename + ".%(ext)s",
             "--no-playlist",
             "--ignore-errors",
-            "--sleep-interval", "2",  # Sleep 2 seconds between downloads
-            "--max-sleep-interval", "5",  # Random sleep up to 5 seconds
-            "--retries", "3",  # Retry failed downloads 3 times
-            "--fragment-retries", "3",  # Retry failed fragments
+            "--sleep-interval",
+            "2",  # Sleep 2 seconds between downloads
+            "--max-sleep-interval",
+            "5",  # Random sleep up to 5 seconds
+            "--retries",
+            "3",  # Retry failed downloads 3 times
+            "--fragment-retries",
+            "3",  # Retry failed fragments
             "--abort-on-unavailable-fragment",  # Skip corrupted videos
         ]
 
@@ -482,15 +496,21 @@ def download_track(track, playlist_dir, base_music_dir, spotify_api, dry_run=Fal
             # Clean up any partial downloads - be more aggressive with cleanup
             cleanup_patterns = [
                 f"{sanitized_filename}.*",  # Exact filename matches
-                f"*{sanitized_filename.split(' - ')[-1]}*"  # Match by song title
+                f"*{sanitized_filename.split(' - ')[-1]}*",  # Match by song title
             ]
 
             for pattern in cleanup_patterns:
                 partial_files = list(Path(playlist_dir).glob(pattern))
                 for partial_file in partial_files:
                     # Remove any non-mp3 files that might be leftover
-                    if (partial_file.suffix in ['.part', '.webm', '.m4a', '.tmp', '.f4a', '.opus'] or
-                        partial_file.name.endswith('.webm.part')):
+                    if partial_file.suffix in [
+                        ".part",
+                        ".webm",
+                        ".m4a",
+                        ".tmp",
+                        ".f4a",
+                        ".opus",
+                    ] or partial_file.name.endswith(".webm.part"):
                         try:
                             partial_file.unlink()
                             print(f"   🗑️  Cleaned: {partial_file.name}")
@@ -499,7 +519,7 @@ def download_track(track, playlist_dir, base_music_dir, spotify_api, dry_run=Fal
 
             print(f"❌ Failed: {sanitized_filename}")
             # Only show first line of error to avoid spam
-            error_lines = result.stderr.strip().split('\n')
+            error_lines = result.stderr.strip().split("\n")
             if error_lines:
                 error_msg = error_lines[0]
                 print(f"   Error: {error_msg}")
@@ -513,7 +533,7 @@ def download_track(track, playlist_dir, base_music_dir, spotify_api, dry_run=Fal
                     "Sign in to confirm you're not a bot",
                     "This video is not available",
                     "Private video",
-                    "Video unavailable"
+                    "Video unavailable",
                 ]
 
                 if any(indicator in error_msg for indicator in blocking_indicators[:4]):  # Only critical errors
@@ -530,9 +550,10 @@ def download_track(track, playlist_dir, base_music_dir, spotify_api, dry_run=Fal
         print(f"💥 Error downloading {sanitized_filename}: {e}")
         return False
 
+
 def main():
     # Ensure we're running in a virtual environment
-    if not os.environ.get('VIRTUAL_ENV'):
+    if not os.environ.get("VIRTUAL_ENV"):
         print("⚠️  Warning: Not running in a virtual environment!")
         print("   This may cause dependency conflicts.")
         print("   Please activate the venv first:")
@@ -549,22 +570,24 @@ def main():
   python3 main.py 37i9dQZF1DXcBWIGoYBM5M --dry-run
   python3 main.py "My Playlist" --dry-run
   python3 main.py /mnt/ssd/Music/Rivotril --dry-run
-  python3 main.py liked --dry-run"""
+  python3 main.py liked --dry-run""",
     )
 
-    parser.add_argument("playlist", help="Spotify playlist URL, ID, name, folder path with playlist-id.txt, or 'liked' for liked songs")
-    parser.add_argument("--dry-run", action="store_true",
-                       help="Show what would be downloaded without actually downloading")
-    parser.add_argument("--no-rename", action="store_true",
-                       help="Don't auto-rename existing files to clean Spotify format")
-    parser.add_argument("--no-link", action="store_true",
-                       help="Don't create hard links/copies for songs found in other folders")
-    parser.add_argument("--no-metadata", action="store_true",
-                       help="Don't fix metadata and artwork (default: enabled)")
-    parser.add_argument("--limit", type=int,
-                       help="Limit number of tracks to download (useful for testing)")
-    parser.add_argument("--export", action="store_true",
-                       help="Export track list to text file instead of downloading")
+    parser.add_argument(
+        "playlist", help="Spotify playlist URL, ID, name, folder path with playlist-id.txt, or 'liked' for liked songs"
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Show what would be downloaded without actually downloading"
+    )
+    parser.add_argument(
+        "--no-rename", action="store_true", help="Don't auto-rename existing files to clean Spotify format"
+    )
+    parser.add_argument(
+        "--no-link", action="store_true", help="Don't create hard links/copies for songs found in other folders"
+    )
+    parser.add_argument("--no-metadata", action="store_true", help="Don't fix metadata and artwork (default: enabled)")
+    parser.add_argument("--limit", type=int, help="Limit number of tracks to download (useful for testing)")
+    parser.add_argument("--export", action="store_true", help="Export track list to text file instead of downloading")
 
     args = parser.parse_args()
     playlist_input = args.playlist
@@ -601,8 +624,8 @@ def main():
 
     try:
         # Check if user wants liked songs
-        is_liked_songs = playlist_input.lower() in ['liked', 'saved', 'likes']
-        spotify = None
+        is_liked_songs = playlist_input.lower() in ["liked", "saved", "likes"]
+        spotify: API | None = None
 
         if is_liked_songs:
             # Use OAuth for liked songs
@@ -637,7 +660,7 @@ def main():
         # Export track list if requested
         if export_only:
             export_file = Path(f"{sanitize_filename(playlist_name)}_tracks.txt")
-            with open(export_file, 'w', encoding='utf-8') as f:
+            with open(export_file, "w", encoding="utf-8") as f:
                 f.write(f"# {playlist_name}\n")
                 f.write(f"# Total tracks: {len(tracks)}\n\n")
                 for i, track in enumerate(tracks, 1):
@@ -650,7 +673,7 @@ def main():
         playlist_dir.mkdir(parents=True, exist_ok=True)
 
         # Save playlist ID for easy re-crawling (only for regular playlists)
-        if not is_liked_songs:
+        if not is_liked_songs and spotify is not None:
             playlist_id_file = playlist_dir / "playlist-id.txt"
             if not playlist_id_file.exists():
                 # Extract the clean playlist ID
@@ -687,7 +710,9 @@ def main():
 
         for i, track in enumerate(tracks, 1):
             print(f"\n[{i}/{len(tracks)}] ", end="")
-            result = download_track(track, playlist_dir, MUSIC_DIR, spotify, dry_run, auto_rename, auto_link, fix_metadata)
+            result = download_track(
+                track, playlist_dir, MUSIC_DIR, spotify, dry_run, auto_rename, auto_link, fix_metadata
+            )
             if result == "skipped":
                 skipped += 1
             elif result:
@@ -711,7 +736,7 @@ def main():
         if not dry_run:
             m3u_file = Path(MUSIC_DIR) / f"{sanitize_filename(playlist_name)}.m3u"
             try:
-                with open(m3u_file, 'w', encoding='utf-8') as f:
+                with open(m3u_file, "w", encoding="utf-8") as f:
                     f.write(f"# {playlist_name}\n")
                     # Find all MP3 files in the playlist directory
                     for mp3_file in playlist_dir.glob("*.mp3"):
@@ -734,6 +759,7 @@ def main():
     except Exception as e:
         print(f"💥 Error: {e}")
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

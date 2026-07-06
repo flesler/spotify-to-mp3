@@ -25,7 +25,7 @@ $PYRIGHT *.py
 
 echo "Running tests..."
 if ls tests/test_*.py 1> /dev/null 2>&1; then
-    $PYTEST tests/
+    $PYTEST
 else
     echo "No tests found yet"
 fi
