@@ -14,6 +14,7 @@ import socket
 import socketserver
 import string
 import time
+import unicodedata
 import webbrowser
 from pathlib import Path
 from threading import Thread
@@ -431,18 +432,25 @@ class OAuth:
 
         return playlists
 
+    @staticmethod
+    def _fold_playlist_name(name: str) -> str:
+        """Case- and accent-insensitive key for playlist name matching."""
+        folded = unicodedata.normalize("NFC", name.strip().casefold())
+        decomposed = unicodedata.normalize("NFD", folded)
+        return "".join(c for c in decomposed if unicodedata.category(c) != "Mn")
+
     def resolve_playlist_by_name(self, name: str) -> tuple[str, str]:
-        """Find a playlist ID by name (case-insensitive, exact match preferred)."""
-        target = name.strip().casefold()
+        """Find a playlist ID by name (case-insensitive, accent-insensitive, exact match preferred)."""
+        target = self._fold_playlist_name(name)
         playlists = self.get_user_playlists()
 
-        exact = [p for p in playlists if p["name"].casefold() == target]
+        exact = [p for p in playlists if self._fold_playlist_name(p["name"]) == target]
         if len(exact) == 1:
             return exact[0]["id"], exact[0]["name"]
         if len(exact) > 1:
             raise ValueError(f"Multiple playlists named {name!r}")
 
-        partial = [p for p in playlists if target in p["name"].casefold()]
+        partial = [p for p in playlists if target in self._fold_playlist_name(p["name"])]
         if len(partial) == 1:
             return partial[0]["id"], partial[0]["name"]
 

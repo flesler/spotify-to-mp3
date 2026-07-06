@@ -224,6 +224,17 @@ def test_resolve_playlist_by_name_partial_match(oauth):
     assert playlist_id == "abc123"
 
 
+def test_resolve_playlist_by_name_accent_insensitive(oauth):
+    playlists = [
+        {"id": "09hhHAMdFTyDSZlcXXfYix", "name": "Español"},
+        {"id": "rock", "name": "Rock en Español"},
+    ]
+    with patch.object(oauth, "get_user_playlists", return_value=playlists):
+        playlist_id, name = oauth.resolve_playlist_by_name("Espanol")
+    assert playlist_id == "09hhHAMdFTyDSZlcXXfYix"
+    assert name == "Español"
+
+
 def test_resolve_playlist_by_name_not_found(oauth):
     with patch.object(oauth, "get_user_playlists", return_value=[{"id": "x", "name": "Other"}]):
         with pytest.raises(ValueError, match="No playlist matching"):

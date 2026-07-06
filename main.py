@@ -511,6 +511,185 @@ def download_track(
         return False
 
 
+def process_playlist(
+    playlist_input: str,
+    *,
+    dry_run: bool,
+    auto_rename: bool,
+    auto_link: bool,
+    fix_metadata: bool,
+    limit: int | None,
+    export_only: bool,
+    full_sync: bool,
+    library_index: LibraryIndex,
+    music_dir: Path,
+    oauth: OAuth | None = None,
+) -> str:
+    """Download one playlist. Returns 'ok', 'empty', or 'error'."""
+
+    input_path = Path(playlist_input)
+    if input_path.is_dir():
+        playlist_id_file = input_path / "playlist-id.txt"
+        if playlist_id_file.exists():
+            playlist_input = playlist_id_file.read_text().strip()
+            print(f"📂 Found playlist ID in folder: {playlist_input}")
+        else:
+            print(f"❌ No playlist-id.txt found in {input_path}")
+            return "error"
+
+    is_liked_songs = playlist_input.lower() in ["liked", "saved", "likes"]
+    if not is_liked_songs and not looks_like_playlist_ref(playlist_input):
+        print(f"🔍 Resolving playlist name: {playlist_input}")
+        if oauth is None:
+            oauth = OAuth(SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET)
+        try:
+            playlist_id, resolved_name = oauth.resolve_playlist_by_name(playlist_input)
+            print(f"✅ Matched playlist: {resolved_name} ({playlist_id})")
+            playlist_input = playlist_id
+        except Exception as e:
+            print(f"❌ {e}")
+            return "error"
+
+    spotify: API | None = None
+
+    if is_liked_songs:
+        print("🔐 Requesting access to liked songs...")
+        if oauth is None:
+            oauth = OAuth(SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET)
+
+        tracks = oauth.get_all_liked_songs(
+            incremental=not full_sync, max_tracks=limit, downloaded_ids=library_index.spotify_ids()
+        )
+        playlist_name = "Liked Songs"
+
+        if not tracks:
+            if full_sync:
+                print("❌ No liked songs found")
+                return "empty"
+            print("✅ No new liked songs to download")
+            return "empty"
+    else:
+        print("🔐 Authenticating with Spotify...")
+        spotify = API(SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET)
+
+        print("📡 Fetching playlist...")
+        tracks, playlist_name = spotify.get_playlist_tracks(playlist_input)
+
+        if not tracks:
+            print("❌ No tracks found in playlist")
+            return "empty"
+
+    if export_only and limit:
+        print(f"📊 Limiting export to first {limit} tracks")
+        tracks = tracks[:limit]
+
+    if export_only:
+        export_file = Path(f"{sanitize_filename(playlist_name)}_tracks.txt")
+        with open(export_file, "w", encoding="utf-8") as f:
+            f.write(f"# {playlist_name}\n")
+            f.write(f"# Total tracks: {len(tracks)}\n\n")
+            for i, track in enumerate(tracks, 1):
+                f.write(f"{i}. {track['artists']} - {track['name']}\n")
+        print(f"📄 Exported track list to: {export_file}")
+        return "ok"
+
+    playlist_dir = Path(MUSIC_DIR) / sanitize_filename(playlist_name)
+    playlist_dir.mkdir(parents=True, exist_ok=True)
+
+    if not is_liked_songs and spotify is not None:
+        playlist_id_file = playlist_dir / "playlist-id.txt"
+        if not playlist_id_file.exists():
+            clean_playlist_id = spotify.extract_playlist_id(playlist_input)
+            playlist_id_file.write_text(clean_playlist_id)
+            print(f"💾 Saved playlist ID to: {playlist_id_file}")
+
+    print("🧹 Cleaning up old temporary files...")
+    cleanup_count = 0
+    cleanup_extensions = ["*.webm", "*.webm.part", "*.part", "*.tmp", "*.m4a", "*.f4a", "*.opus"]
+
+    for ext in cleanup_extensions:
+        for temp_file in Path(MUSIC_DIR).rglob(ext):
+            try:
+                temp_file.unlink()
+                cleanup_count += 1
+            except Exception:
+                pass
+
+    if cleanup_count > 0:
+        print(f"   Removed {cleanup_count} temporary files")
+
+    if dry_run:
+        print(f"\n🔍 DRY RUN - Would download to: {playlist_dir}")
+    else:
+        print(f"\n🎵 Starting downloads to: {playlist_dir}")
+    print("=" * 50)
+
+    successful = 0
+    failed = 0
+    skipped = 0
+    processed = 0
+
+    if limit:
+        print(f"📊 Limit: {limit} tracks (skips don't count)")
+
+    for track in tracks:
+        if limit and processed >= limit:
+            break
+
+        n = processed + skipped + 1
+        print(f"\n[{n}] {track['artists']} - {track['name']}")
+        result = download_track(
+            track,
+            playlist_dir,
+            MUSIC_DIR,
+            spotify,
+            dry_run,
+            auto_rename,
+            auto_link,
+            fix_metadata,
+            library_index=library_index,
+        )
+        if result == "skipped":
+            skipped += 1
+            continue
+
+        processed += 1
+        if result:
+            successful += 1
+        else:
+            failed += 1
+
+    print("\n" + "=" * 50)
+    print("🎉 Download Summary:")
+    print(f"   ✅ Successful: {successful}")
+    if skipped > 0:
+        print(f"   ⏭️  Skipped (exists): {skipped}")
+    print(f"   ❌ Failed: {failed}")
+    print(f"   📁 Location: {playlist_dir}")
+
+    if not dry_run and (successful + skipped) > 0:
+        print("\n💡 Tip: Run Navidrome library scan to index new files")
+
+    if not dry_run:
+        m3u_file = Path(MUSIC_DIR) / f"{sanitize_filename(playlist_name)}.m3u"
+        try:
+            with open(m3u_file, "w", encoding="utf-8") as f:
+                f.write(f"# {playlist_name}\n")
+                for mp3_file in playlist_dir.glob("*.mp3"):
+                    relative_path = mp3_file.relative_to(Path(MUSIC_DIR))
+                    f.write(f"{relative_path}\n")
+            print(f"📋 Generated M3U playlist: {m3u_file}")
+
+            rescan_file = Path(MUSIC_DIR) / ".rescan"
+            rescan_file.touch()
+            print(f"🔄 Triggered Navidrome rescan: {rescan_file}")
+
+        except Exception as e:
+            print(f"⚠️  Failed to generate M3U or trigger rescan: {e}")
+
+    return "error" if failed > 0 else "ok"
+
+
 def main():
     # Ensure we're running in a virtual environment
     if not os.environ.get("VIRTUAL_ENV"):
@@ -529,15 +708,15 @@ def main():
   python3 main.py https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M
   python3 main.py 37i9dQZF1DXcBWIGoYBM5M --dry-run
   python3 main.py "My Playlist" --dry-run
+  python3 main.py Español Rivotril
   python3 main.py /mnt/ssd/Music/Rivotril --dry-run
   python3 main.py liked --dry-run""",
     )
 
     parser.add_argument(
-        "playlist",
-        nargs="?",
-        default=None,
-        help="Spotify playlist URL, ID, name, folder path with playlist-id.txt, or 'liked' for liked songs",
+        "playlists",
+        nargs="*",
+        help="Spotify playlist URL, ID, name, folder path with playlist-id.txt, or 'liked' (one or more)",
     )
     parser.add_argument(
         "--dry-run", action="store_true", help="Show what would be downloaded without actually downloading"
@@ -559,11 +738,9 @@ def main():
     )
 
     args = parser.parse_args()
-    playlist_input = args.playlist
 
-    # --verify doesn't need playlist argument
-    if not args.verify and not playlist_input:
-        parser.error("playlist is required unless using --verify")
+    if not args.verify and not args.playlists:
+        parser.error("at least one playlist is required unless using --verify")
 
     dry_run = args.dry_run
     auto_rename = not args.no_rename
@@ -622,30 +799,6 @@ def main():
             print("❌ Credentials invalid - check .env or upgrade account to Premium")
         sys.exit(0)
 
-    # Check if it's a folder path with playlist-id.txt
-    input_path = Path(playlist_input)
-    if input_path.is_dir():
-        playlist_id_file = input_path / "playlist-id.txt"
-        if playlist_id_file.exists():
-            playlist_input = playlist_id_file.read_text().strip()
-            print(f"📂 Found playlist ID in folder: {playlist_input}")
-        else:
-            print(f"❌ No playlist-id.txt found in {input_path}")
-            sys.exit(1)
-
-    is_liked_songs = playlist_input.lower() in ["liked", "saved", "likes"]
-    if not is_liked_songs and not looks_like_playlist_ref(playlist_input):
-        print(f"🔍 Resolving playlist name: {playlist_input}")
-        oauth = OAuth(SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET)
-        try:
-            playlist_id, resolved_name = oauth.resolve_playlist_by_name(playlist_input)
-            print(f"✅ Matched playlist: {resolved_name} ({playlist_id})")
-            playlist_input = playlist_id
-        except Exception as e:
-            print(f"❌ {e}")
-            sys.exit(1)
-
-    # Check if yt-dlp is installed (skip in dry-run mode)
     if not dry_run:
         try:
             subprocess.run([*ytdlp_cmd(), "--version"], capture_output=True, check=True)
@@ -654,165 +807,41 @@ def main():
             print("   ./scripts/setup-venv.sh")
             sys.exit(1)
 
-    # Create music directory if it doesn't exist
     music_dir = Path(MUSIC_DIR)
     music_dir.mkdir(parents=True, exist_ok=True)
 
     library_index = LibraryIndex(music_dir)
     library_index.build()
 
+    oauth = OAuth(SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET)
+    failed_playlists: list[str] = []
+
     try:
-        # Check if user wants liked songs
-        spotify: API | None = None
+        for i, playlist_input in enumerate(args.playlists):
+            if len(args.playlists) > 1:
+                print(f"\n{'=' * 60}")
+                print(f"📋 [{i + 1}/{len(args.playlists)}] {playlist_input}")
+                print("=" * 60)
 
-        if is_liked_songs:
-            # Use OAuth for liked songs
-            print("🔐 Requesting access to liked songs...")
-            oauth = OAuth(SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET)
-
-            # Get liked songs (incremental by default)
-            tracks = oauth.get_all_liked_songs(
-                incremental=not full_sync, max_tracks=limit, downloaded_ids=library_index.spotify_ids()
-            )
-            playlist_name = "Liked Songs"
-
-            if not tracks:
-                if full_sync:
-                    print("❌ No liked songs found")
-                else:
-                    print("✅ No new liked songs to download")
-                sys.exit(0)
-        else:
-            # Initialize Spotify API with client credentials
-            print("🔐 Authenticating with Spotify...")
-            spotify = API(SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET)
-
-            # Get playlist tracks
-            print("📡 Fetching playlist...")
-            tracks, playlist_name = spotify.get_playlist_tracks(playlist_input)
-
-            if not tracks:
-                print("❌ No tracks found in playlist")
-                sys.exit(1)
-
-        # Export track list if requested
-        if export_only and limit:
-            print(f"📊 Limiting export to first {limit} tracks")
-            tracks = tracks[:limit]
-
-        if export_only:
-            export_file = Path(f"{sanitize_filename(playlist_name)}_tracks.txt")
-            with open(export_file, "w", encoding="utf-8") as f:
-                f.write(f"# {playlist_name}\n")
-                f.write(f"# Total tracks: {len(tracks)}\n\n")
-                for i, track in enumerate(tracks, 1):
-                    f.write(f"{i}. {track['artists']} - {track['name']}\n")
-            print(f"📄 Exported track list to: {export_file}")
-            sys.exit(0)
-
-        # Create playlist directory
-        playlist_dir = Path(MUSIC_DIR) / sanitize_filename(playlist_name)
-        playlist_dir.mkdir(parents=True, exist_ok=True)
-
-        # Save playlist ID for easy re-crawling (only for regular playlists)
-        if not is_liked_songs and spotify is not None:
-            playlist_id_file = playlist_dir / "playlist-id.txt"
-            if not playlist_id_file.exists():
-                # Extract the clean playlist ID
-                clean_playlist_id = spotify.extract_playlist_id(playlist_input)
-                playlist_id_file.write_text(clean_playlist_id)
-                print(f"💾 Saved playlist ID to: {playlist_id_file}")
-
-        # Clean up any existing temporary files in the Music directory
-        print("🧹 Cleaning up old temporary files...")
-        cleanup_count = 0
-        cleanup_extensions = ["*.webm", "*.webm.part", "*.part", "*.tmp", "*.m4a", "*.f4a", "*.opus"]
-
-        for ext in cleanup_extensions:
-            for temp_file in Path(MUSIC_DIR).rglob(ext):
-                try:
-                    temp_file.unlink()
-                    cleanup_count += 1
-                except Exception:
-                    pass
-
-        if cleanup_count > 0:
-            print(f"   Removed {cleanup_count} temporary files")
-
-        # Download tracks
-        if dry_run:
-            print(f"\n🔍 DRY RUN - Would download to: {playlist_dir}")
-        else:
-            print(f"\n🎵 Starting downloads to: {playlist_dir}")
-        print("=" * 50)
-
-        successful = 0
-        failed = 0
-        skipped = 0
-        processed = 0
-
-        if limit:
-            print(f"📊 Limit: {limit} tracks (skips don't count)")
-
-        for track in tracks:
-            if limit and processed >= limit:
-                break
-
-            n = processed + skipped + 1
-            print(f"\n[{n}] {track['artists']} - {track['name']}")
-            result = download_track(
-                track,
-                playlist_dir,
-                MUSIC_DIR,
-                spotify,
-                dry_run,
-                auto_rename,
-                auto_link,
-                fix_metadata,
+            status = process_playlist(
+                playlist_input,
+                dry_run=dry_run,
+                auto_rename=auto_rename,
+                auto_link=auto_link,
+                fix_metadata=fix_metadata,
+                limit=limit,
+                export_only=export_only,
+                full_sync=full_sync,
                 library_index=library_index,
+                music_dir=music_dir,
+                oauth=oauth,
             )
-            if result == "skipped":
-                skipped += 1
-                continue
+            if status == "error":
+                failed_playlists.append(playlist_input)
 
-            processed += 1
-            if result:
-                successful += 1
-            else:
-                failed += 1
-
-        # Summary
-        print("\n" + "=" * 50)
-        print("🎉 Download Summary:")
-        print(f"   ✅ Successful: {successful}")
-        if skipped > 0:
-            print(f"   ⏭️  Skipped (exists): {skipped}")
-        print(f"   ❌ Failed: {failed}")
-        print(f"   📁 Location: {playlist_dir}")
-
-        if not dry_run and (successful + skipped) > 0:
-            print("\n💡 Tip: Run Navidrome library scan to index new files")
-
-        # Generate M3U playlist file for Navidrome (only if not dry-run)
-        if not dry_run:
-            m3u_file = Path(MUSIC_DIR) / f"{sanitize_filename(playlist_name)}.m3u"
-            try:
-                with open(m3u_file, "w", encoding="utf-8") as f:
-                    f.write(f"# {playlist_name}\n")
-                    # Find all MP3 files in the playlist directory
-                    for mp3_file in playlist_dir.glob("*.mp3"):
-                        # Write relative path from MUSIC_DIR
-                        relative_path = mp3_file.relative_to(Path(MUSIC_DIR))
-                        f.write(f"{relative_path}\n")
-                print(f"📋 Generated M3U playlist: {m3u_file}")
-
-                # Trigger Navidrome rescan
-                rescan_file = Path(MUSIC_DIR) / ".rescan"
-                rescan_file.touch()
-                print(f"🔄 Triggered Navidrome rescan: {rescan_file}")
-
-            except Exception as e:
-                print(f"⚠️  Failed to generate M3U or trigger rescan: {e}")
+        if failed_playlists:
+            print(f"\n❌ Failed playlists: {', '.join(failed_playlists)}")
+            sys.exit(1)
 
     except KeyboardInterrupt:
         print("\n⏹️  Download interrupted by user")
