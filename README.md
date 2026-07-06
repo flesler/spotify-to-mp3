@@ -63,8 +63,14 @@ python spotify_playlist_downloader.py https://open.spotify.com/playlist/37i9p40I
 # Download your liked/saved songs (requires OAuth authentication)
 python spotify_playlist_downloader.py liked
 
+# Export track list without downloading
+python spotify_playlist_downloader.py <playlist_url> --export
+
 # Dry run - see what would be downloaded
 python spotify_playlist_downloader.py <playlist_url> --dry-run
+
+# Test with first 3 tracks
+python spotify_playlist_downloader.py <playlist_url> --limit 3
 
 # Disable auto-renaming
 python spotify_playlist_downloader.py <playlist_url> --no-rename
@@ -79,18 +85,23 @@ python spotify_playlist_downloader.py <playlist_url> --no-fix-metadata
 ### Options
 
 - `--dry-run`: Preview what would be downloaded without actually downloading
+- `--export`: Export track list to text file instead of downloading
+- `--limit N`: Limit to first N tracks (useful for testing)
 - `--no-rename`: Don't rename existing files to clean format
 - `--no-link`: Copy files instead of creating hard links
 - `--no-fix-metadata`: Skip metadata/album art updates
 
 ## How It Works
 
-1. **Spotify API**: Fetches playlist tracks using Spotify's API (client credentials flow)
-2. **Duplicate Check**: Scans `/mnt/ssd/Music` recursively for existing tracks
+1. **Spotify API**: Fetches playlist tracks using Spotify's API (client credentials or OAuth)
+2. **Duplicate Check**: Scans music directory recursively for existing tracks
+   - Filename matching (case-insensitive)
+   - Duration matching (±5 seconds tolerance) when Spotify provides duration
 3. **Smart Actions**:
-   - If track exists elsewhere → creates hard link or renames
+   - If track exists elsewhere → creates hard link or renames to clean format
    - If track doesn't exist → downloads from YouTube via `yt-dlp`
 4. **Metadata Enhancement**: Downloads album artwork and embeds full ID3 tags
+5. **Playlist Organization**: Creates M3U file for Navidrome integration
 
 ## Directory Structure
 
@@ -140,10 +151,24 @@ Environment variables take precedence over `.env` file values.
 
 ## Spotify API Setup
 
+### For Public Playlists (Client Credentials)
+
 1. Go to [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
 2. Create a new app
 3. Copy Client ID and Client Secret
-4. Update the script with your credentials
+4. Update `.env` with your credentials
+
+**Note**: Requires Spotify Premium subscription on the account that created the app.
+
+### For Liked Songs (OAuth Authentication)
+
+When downloading your liked/saved songs, the script will:
+1. Open your browser for Spotify authentication
+2. Request permission to access your library
+3. Save a refresh token at `~/.config/spotify-to-mp3/token.json`
+4. Automatically use cached tokens on subsequent runs
+
+No extra setup needed - just run `python spotify_playlist_downloader.py liked`
 
 ## Navidrome Integration
 

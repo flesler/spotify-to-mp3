@@ -23,14 +23,22 @@ from mutagen.mp3 import MP3
 # Load environment variables from .env file if it exists
 load_dotenv()
 
-# Spotify API credentials (can be overridden by environment variables)
-SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID", "")
-SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET", "")
+# Spotify API credentials (required)
+SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID")
+SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
 
-# Download directory (can be overridden by environment variable)
-MUSIC_DIR = os.getenv("MUSIC_DIR", "/mnt/ssd/Music")
+if not SPOTIFY_CLIENT_ID or not SPOTIFY_CLIENT_SECRET:
+    print("❌ Error: SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET must be set in .env file")
+    sys.exit(1)
 
-# Download quality
+# Download directory (required)
+MUSIC_DIR = os.getenv("MUSIC_DIR")
+
+if not MUSIC_DIR:
+    print("❌ Error: MUSIC_DIR must be set in .env file")
+    sys.exit(1)
+
+# Download quality (192K, 256K, 320K, best)
 DOWNLOAD_QUALITY = os.getenv("DOWNLOAD_QUALITY", "192K")
 
 # Enable audio fingerprinting
@@ -257,8 +265,16 @@ def set_mp3_metadata(file_path, track, album_art_data=None, album_info=None):
         print(f"   ⚠️  Metadata update failed: {e}")
         return False
 
-def check_if_track_exists(artists, title, base_music_dir, auto_rename=True):
-    """Check if a track already exists anywhere in the music directory"""
+def check_if_track_exists(artists, title, base_music_dir, auto_rename=True, duration_ms=None):
+    """Check if a track already exists anywhere in the music directory
+
+    Args:
+        artists: Artist name(s)
+        title: Track title
+        base_music_dir: Base directory to search
+        auto_rename: Whether to rename files to clean format
+        duration_ms: Expected duration in milliseconds for duration matching
+    """
     # Clean up artists and title for better matching
     clean_artists = sanitize_filename(artists).lower()
     clean_title = sanitize_filename(title).lower()
@@ -272,6 +288,17 @@ def check_if_track_exists(artists, title, base_music_dir, auto_rename=True):
             filename_lower = mp3_file.name.lower()
             # Check if both artist and title appear in the filename
             if clean_artists in filename_lower and clean_title in filename_lower:
+                # If duration is provided, verify with duration matching
+                if duration_ms:
+                    try:
+                        audio = MP3(mp3_file)
+                        file_duration_ms = int(audio.info.length * 1000)
+                        # Allow 5 second tolerance
+                        if abs(file_duration_ms - duration_ms) > 5000:
+                            continue  # Duration doesn't match, skip this file
+                    except Exception:
+                        pass  # Can't read duration, fall back to filename only
+
                 # Check if it's already in clean format
                 current_name = mp3_file.stem  # filename without extension
                 if current_name == clean_spotify_name:
@@ -306,7 +333,7 @@ def download_track(track, playlist_dir, base_music_dir, spotify_api, dry_run=Fal
     sanitized_filename = sanitize_filename(f"{artists} - {title}")
 
     # Check if file already exists anywhere
-    existing_file = check_if_track_exists(artists, title, base_music_dir, auto_rename)
+    existing_file = check_if_track_exists(artists, title, base_music_dir, auto_rename, track.get("duration_ms"))
     if existing_file:
         # Check if it's already in the target playlist directory
         target_path = Path(playlist_dir) / f"{sanitized_filename}.mp3"
@@ -317,7 +344,7 @@ def download_track(track, playlist_dir, base_music_dir, spotify_api, dry_run=Fal
                     print(f"🔗 Would link: {existing_file.relative_to(base_music_dir)} → {target_path.name}")
                     if fix_metadata:
                         print(f"   🎨 Would fix metadata")
-                    return True
+                    return "skipped"
                 try:
                     target_path.hardlink_to(existing_file)
                     print(f"🔗 Linked: {existing_file.relative_to(base_music_dir)} → {target_path.name}")
@@ -326,7 +353,7 @@ def download_track(track, playlist_dir, base_music_dir, spotify_api, dry_run=Fal
                     if fix_metadata:
                         fix_mp3_metadata_smart(target_path, track)
 
-                    return True
+                    return "skipped"
                 except Exception as e:
                     # Fall back to copy if hard link fails
                     try:
@@ -338,7 +365,7 @@ def download_track(track, playlist_dir, base_music_dir, spotify_api, dry_run=Fal
                         if fix_metadata:
                             fix_mp3_metadata_smart(target_path, track)
 
-                        return True
+                        return "skipped"
                     except Exception as e2:
                         print(f"⚠️  Link/copy failed: {e2}")
             else:
@@ -350,7 +377,7 @@ def download_track(track, playlist_dir, base_music_dir, spotify_api, dry_run=Fal
                 elif fix_metadata and dry_run:
                     print(f"   🎨 Would fix metadata")
 
-                return True
+                return "skipped"
         else:
             print(f"⏭️  Exists: {existing_file.relative_to(base_music_dir)}")
 
@@ -360,7 +387,7 @@ def download_track(track, playlist_dir, base_music_dir, spotify_api, dry_run=Fal
             elif fix_metadata and dry_run:
                 print(f"   🎨 Would fix metadata")
 
-            return True
+            return "skipped"
 
     # Check if file exists in the target playlist directory
     output_path = Path(playlist_dir) / f"{sanitized_filename}.mp3"
@@ -373,7 +400,7 @@ def download_track(track, playlist_dir, base_music_dir, spotify_api, dry_run=Fal
         elif fix_metadata and dry_run:
             print(f"   🎨 Would fix metadata")
 
-        return True
+        return "skipped"
 
     if dry_run:
         print(f"🎵 {search_query}")
@@ -384,11 +411,11 @@ def download_track(track, playlist_dir, base_music_dir, spotify_api, dry_run=Fal
     try:
         # yt-dlp command to search and download from YouTube
         cmd = [
-            "/home/pi/.local/bin/yt-dlp",
+            "yt-dlp",
             f"ytsearch1:{search_query}",  # Search for 1 result
             "--extract-audio",
             "--audio-format", "mp3",
-            "--audio-quality", "192K",
+            "--audio-quality", DOWNLOAD_QUALITY,
             "--output", str(playlist_dir) + "/" + sanitized_filename + ".%(ext)s",
             "--no-playlist",
             "--ignore-errors",
@@ -485,6 +512,10 @@ def main():
                        help="Don't create hard links/copies for songs found in other folders")
     parser.add_argument("--no-metadata", action="store_true",
                        help="Don't fix metadata and artwork (default: enabled)")
+    parser.add_argument("--limit", type=int,
+                       help="Limit number of tracks to download (useful for testing)")
+    parser.add_argument("--export", action="store_true",
+                       help="Export track list to text file instead of downloading")
 
     args = parser.parse_args()
     playlist_input = args.playlist
@@ -492,6 +523,8 @@ def main():
     auto_rename = not args.no_rename
     auto_link = not args.no_link
     fix_metadata = not args.no_metadata
+    limit = args.limit
+    export_only = args.export
 
     # Check if it's a folder path with playlist-id.txt
     input_path = Path(playlist_input)
@@ -507,7 +540,7 @@ def main():
     # Check if yt-dlp is installed (skip in dry-run mode)
     if not dry_run:
         try:
-            subprocess.run(["/home/pi/.local/bin/yt-dlp", "--version"], capture_output=True, check=True)
+            subprocess.run(["yt-dlp", "--version"], capture_output=True, check=True)
         except (subprocess.CalledProcessError, FileNotFoundError):
             print("❌ yt-dlp not found. Please install it:")
             print("   pip3 install yt-dlp")
@@ -520,6 +553,7 @@ def main():
     try:
         # Check if user wants liked songs
         is_liked_songs = playlist_input.lower() in ['liked', 'saved', 'likes']
+        spotify = None
 
         if is_liked_songs:
             # Use OAuth for liked songs
@@ -546,6 +580,22 @@ def main():
             if not tracks:
                 print("❌ No tracks found in playlist")
                 sys.exit(1)
+
+        # Apply limit if specified
+        if limit:
+            print(f"📊 Limiting to first {limit} tracks")
+            tracks = tracks[:limit]
+
+        # Export track list if requested
+        if export_only:
+            export_file = Path(f"{sanitize_filename(playlist_name)}_tracks.txt")
+            with open(export_file, 'w', encoding='utf-8') as f:
+                f.write(f"# {playlist_name}\n")
+                f.write(f"# Total tracks: {len(tracks)}\n\n")
+                for i, track in enumerate(tracks, 1):
+                    f.write(f"{i}. {track['artists']} - {track['name']}\n")
+            print(f"📄 Exported track list to: {export_file}")
+            sys.exit(0)
 
         # Create playlist directory
         playlist_dir = Path(MUSIC_DIR) / sanitize_filename(playlist_name)
@@ -585,10 +635,14 @@ def main():
 
         successful = 0
         failed = 0
+        skipped = 0
 
         for i, track in enumerate(tracks, 1):
             print(f"\n[{i}/{len(tracks)}] ", end="")
-            if download_track(track, playlist_dir, MUSIC_DIR, spotify, dry_run, auto_rename, auto_link, fix_metadata):
+            result = download_track(track, playlist_dir, MUSIC_DIR, spotify, dry_run, auto_rename, auto_link, fix_metadata)
+            if result == "skipped":
+                skipped += 1
+            elif result:
                 successful += 1
             else:
                 failed += 1
@@ -597,8 +651,13 @@ def main():
         print("\n" + "=" * 50)
         print(f"🎉 Download Summary:")
         print(f"   ✅ Successful: {successful}")
+        if skipped > 0:
+            print(f"   ⏭️  Skipped (exists): {skipped}")
         print(f"   ❌ Failed: {failed}")
         print(f"   📁 Location: {playlist_dir}")
+
+        if not dry_run and (successful + skipped) > 0:
+            print(f"\n💡 Tip: Run Navidrome library scan to index new files")
 
         # Generate M3U playlist file for Navidrome (only if not dry-run)
         if not dry_run:
