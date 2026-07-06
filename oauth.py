@@ -183,7 +183,6 @@ class OAuth:
 
                 if access_token and not self._is_token_expired(token_data):
                     if self._validate_access_token(access_token):
-                        print("✅ Using cached Spotify token")
                         return access_token
                     print("⚠️  Cached token rejected by Spotify API")
 

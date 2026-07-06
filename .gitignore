@@ -33,3 +33,4 @@ Music/
 *.log
 -e
 tmp/
+models/essentia/
