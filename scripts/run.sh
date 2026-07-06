@@ -13,4 +13,5 @@ if [ ! -f "$VENV_ACTIVATE" ]; then
 fi
 
 source "$VENV_ACTIVATE"
+export PYTHONUNBUFFERED=1
 exec python "$ROOT_DIR/main.py" "$@"
