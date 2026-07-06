@@ -179,3 +179,40 @@ def test_get_txxx_reads_tag(tmp_path):
     tags = MP3(mp3).tags
     assert get_txxx(tags, "SPOTIFY_ID") == "x"
     assert get_txxx(tags, "YOUTUBE_ID") == "yt1"
+
+
+def test_heal_paths_merges_duplicates(tmp_path):
+    music_dir = tmp_path / "Music"
+    a_dir = music_dir / "A"
+    b_dir = music_dir / "B"
+    a_dir.mkdir(parents=True)
+    b_dir.mkdir(parents=True)
+    primary = a_dir / "song.mp3"
+    duplicate = b_dir / "song.mp3"
+    primary.write_bytes(b"same")
+    duplicate.write_bytes(b"same")
+
+    index = LibraryIndex(music_dir)
+    index._hardlinks_ok = True
+    healed = index._heal_paths([str(primary.relative_to(music_dir)), str(duplicate.relative_to(music_dir))])
+
+    assert len(healed) == 2
+    assert primary.stat().st_ino == duplicate.stat().st_ino
+
+
+def test_untagged_grouped_by_filename_in_build(tmp_path):
+    music_dir = tmp_path / "Music"
+    p1 = music_dir / "P1"
+    p2 = music_dir / "P2"
+    p1.mkdir(parents=True)
+    p2.mkdir(parents=True)
+    (p1 / "Artist - Title.mp3").write_bytes(b"x")
+    (p2 / "Artist - Title.mp3").write_bytes(b"x")
+
+    index = LibraryIndex(music_dir)
+    index._hardlinks_ok = True
+    index.build()
+
+    assert len(index.untagged) == 2
+    paths = list(index.untagged.keys())
+    assert (music_dir / paths[0]).stat().st_ino == (music_dir / paths[1]).stat().st_ino

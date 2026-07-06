@@ -228,7 +228,7 @@ class TestHardLinking:
         shutil.rmtree(self.temp_dir)
 
     def test_hardlink_detection(self):
-        from main import link_track
+        from library import link_track
 
         original = self.playlist1 / "Artist - Title.mp3"
         original.write_text("dummy content")

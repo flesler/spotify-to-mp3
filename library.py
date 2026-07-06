@@ -1,7 +1,10 @@
 """Index MP3 files by Spotify ID. JSON cache is authoritative when paths[0] mtime matches."""
 
 import json
+import os
+import shutil
 import time
+from collections import defaultdict
 from pathlib import Path
 
 from mutagen.mp3 import MP3
@@ -26,6 +29,22 @@ def read_ids_from_mp3(path: Path) -> tuple[str | None, str | None]:
         return None, None
 
 
+def link_track(source: Path, target: Path):
+    """Hard link source at target using a relative path."""
+    source = source.resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists():
+        raise FileExistsError(target)
+
+    rel = os.path.relpath(source, start=target.parent.resolve())
+    cwd = os.getcwd()
+    os.chdir(target.parent)
+    try:
+        os.link(rel, target.name)
+    finally:
+        os.chdir(cwd)
+
+
 class LibraryIndex:
     """Global map: spotify_id -> {paths[], youtube_id, mtime}. paths[0] is the primary file."""
 
@@ -35,6 +54,8 @@ class LibraryIndex:
         self.tracks: dict[str, dict] = {}
         self.untagged: dict[str, dict] = {}
         self._dirty = False
+        self._hardlinks_ok: bool | None = None
+        self._healed = 0
 
     def _rel_key(self, path: Path) -> str:
         return str(path.relative_to(self.music_dir))
@@ -42,10 +63,72 @@ class LibraryIndex:
     def _sort_paths(self, paths: list[str]) -> list[str]:
         return sorted(set(paths), key=lambda p: ((self.music_dir / p).is_symlink(), p))
 
+    def _same_inode(self, a: Path, b: Path) -> bool:
+        try:
+            return a.resolve().stat().st_ino == b.resolve().stat().st_ino
+        except OSError:
+            return False
+
+    def _hardlinks_work(self) -> bool:
+        if self._hardlinks_ok is not None:
+            return self._hardlinks_ok
+
+        test_dir = self.music_dir / ".link-test"
+        try:
+            test_dir.mkdir(exist_ok=True)
+            a = test_dir / "a"
+            b = test_dir / "b"
+            a.write_bytes(b"x")
+            os.link(a, b)
+            self._hardlinks_ok = os.stat(a).st_ino == os.stat(b).st_ino
+        except OSError:
+            self._hardlinks_ok = False
+        finally:
+            shutil.rmtree(test_dir, ignore_errors=True)
+
+        return self._hardlinks_ok
+
+    def _heal_paths(self, paths: list[str]) -> list[str]:
+        paths = self._sort_paths(paths)
+        if len(paths) < 2:
+            return paths
+
+        primary = self.music_dir / paths[0]
+        if not primary.exists():
+            return paths
+
+        healed = [paths[0]]
+        for rel in paths[1:]:
+            dup = self.music_dir / rel
+            if not dup.exists():
+                self._dirty = True
+                continue
+            if self._same_inode(primary, dup):
+                healed.append(rel)
+                continue
+
+            try:
+                dup.unlink()
+                link_track(primary, dup)
+                if self._same_inode(primary, dup):
+                    healed.append(rel)
+                    self._healed += 1
+                    self._dirty = True
+                else:
+                    shutil.copy2(primary, dup)
+                    healed.append(rel)
+            except OSError:
+                if not dup.exists():
+                    shutil.copy2(primary, dup)
+                healed.append(rel)
+
+        return self._sort_paths(healed)
+
     def build(self):
         cached = self._load_cache()
         cached_tracks = cached.get("tracks", {})
         cached_untagged = cached.get("untagged", {})
+        self._healed = 0
 
         by_spotify: dict[str, list[str]] = {}
         untagged_paths: list[str] = []
@@ -62,9 +145,14 @@ class LibraryIndex:
             else:
                 untagged_paths.append(key)
 
+        heal = self._hardlinks_work()
+
         tracks: dict[str, dict] = {}
         for spotify_id, paths in by_spotify.items():
             paths = self._sort_paths(paths)
+            if heal and len(paths) > 1:
+                paths = self._heal_paths(paths)
+
             primary = self.music_dir / paths[0]
             mtime = primary.resolve().stat().st_mtime
             cached_track = cached_tracks.get(spotify_id, {})
@@ -77,10 +165,23 @@ class LibraryIndex:
 
             tracks[spotify_id] = {"paths": paths, "mtime": mtime, "youtube_id": youtube_id}
 
-        untagged: dict[str, dict] = {}
+        by_name: dict[str, list[str]] = defaultdict(list)
         for key in untagged_paths:
+            by_name[Path(key).name.lower()].append(key)
+
+        final_untagged_keys: list[str] = []
+        for paths in by_name.values():
+            paths = self._sort_paths(paths)
+            if heal and len(paths) > 1:
+                paths = self._heal_paths(paths)
+            final_untagged_keys.extend(paths)
+
+        untagged: dict[str, dict] = {}
+        for key in final_untagged_keys:
             path = self.music_dir / key
-            mtime = path.stat().st_mtime
+            if not path.exists():
+                continue
+            mtime = path.resolve().stat().st_mtime
             cached_entry = cached_untagged.get(key)
             if cached_entry and cached_entry.get("mtime") == mtime:
                 youtube_id = cached_entry.get("youtube_id")
@@ -92,7 +193,13 @@ class LibraryIndex:
         self.untagged = untagged
         if {"tracks": tracks, "untagged": untagged} != {"tracks": cached_tracks, "untagged": cached_untagged}:
             self._dirty = True
-        print(f"📇 Library index: {len(tracks)} tracks / {scanned} mp3s")
+
+        msg = f"📇 Library index: {len(tracks)} tracks / {scanned} mp3s"
+        if self._healed:
+            msg += f" (healed {self._healed} duplicates)"
+        elif not heal:
+            msg += " (hard links unavailable, skip heal)"
+        print(msg)
 
     def spotify_ids(self) -> set[str]:
         return set(self.tracks.keys())

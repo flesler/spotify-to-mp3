@@ -36,7 +36,7 @@ from mutagen.mp3 import MP3
 # Import API modules
 # Import API modules
 from api import API, looks_like_playlist_ref
-from library import LibraryIndex, get_txxx
+from library import LibraryIndex, get_txxx, link_track
 from oauth import OAuth
 from ytdlp_util import download_with_search_fallback, is_rate_limited, ytdlp_cmd
 
@@ -356,22 +356,6 @@ def _finalize_match(mp3_file, clean_spotify_name, auto_rename, library_index=Non
                 return mp3_file
 
     return mp3_file
-
-
-def link_track(source: Path, target: Path):
-    """Hard link source at target using a relative path."""
-    source = source.resolve()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    if target.exists():
-        raise FileExistsError(target)
-
-    rel = os.path.relpath(source, start=target.parent.resolve())
-    cwd = os.getcwd()
-    os.chdir(target.parent)
-    try:
-        os.link(rel, target.name)
-    finally:
-        os.chdir(cwd)
 
 
 def download_track(
