@@ -358,6 +358,22 @@ def _finalize_match(mp3_file, clean_spotify_name, auto_rename, library_index=Non
     return mp3_file
 
 
+def link_track(source: Path, target: Path):
+    """Hard link source at target using a relative path."""
+    source = source.resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists():
+        raise FileExistsError(target)
+
+    rel = os.path.relpath(source, start=target.parent.resolve())
+    cwd = os.getcwd()
+    os.chdir(target.parent)
+    try:
+        os.link(rel, target.name)
+    finally:
+        os.chdir(cwd)
+
+
 def download_track(
     track,
     playlist_dir,
@@ -394,7 +410,9 @@ def download_track(
         target_path = Path(playlist_dir) / f"{sanitized_filename}.mp3"
         if existing_file.parent != Path(playlist_dir) and auto_link:
             # File exists elsewhere, create hard link in playlist directory
-            if not target_path.exists():
+            target_rel = str(target_path.relative_to(base_music_dir))
+            already_linked = library_index and track.get("id") and library_index.has_path(track["id"], target_rel)
+            if not target_path.exists() and not already_linked:
                 if dry_run:
                     print(f"⏭️  Skipped ({match_reason}): {rel_path}")
                     print(f"🔗 Would link → {target_path.name}")
@@ -402,17 +420,17 @@ def download_track(
                         print("   🎨 Would fix metadata")
                     return "skipped"
                 try:
-                    target_path.hardlink_to(existing_file)
+                    link_track(existing_file, target_path)
                     print(f"⏭️  Skipped ({match_reason}): {rel_path}")
                     print(f"🔗 Linked → {target_path.name}")
+                    if library_index and track.get("id"):
+                        library_index.note_file(target_path, track.get("id"))
 
-                    # Fix metadata on the linked file
                     if fix_metadata:
                         fix_mp3_metadata_smart(target_path, track, library_index=library_index)
 
                     return "skipped"
                 except Exception:
-                    # Fall back to copy if hard link fails
                     try:
                         import shutil
 
@@ -420,7 +438,9 @@ def download_track(
                         print(f"⏭️  Skipped ({match_reason}): {rel_path}")
                         print(f"📋 Copied → {target_path.name}")
 
-                        # Fix metadata on the copied file
+                        if library_index and track.get("id"):
+                            library_index.note_file(target_path, track.get("id"))
+
                         if fix_metadata:
                             fix_mp3_metadata_smart(target_path, track, library_index=library_index)
 

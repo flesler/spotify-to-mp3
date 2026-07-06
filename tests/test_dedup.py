@@ -217,31 +217,25 @@ class TestHardLinking:
     """Test hard link creation across playlists"""
 
     def setup_method(self):
-        """Create temp directory structure"""
         self.temp_dir = tempfile.mkdtemp()
         self.base_path = Path(self.temp_dir)
-
-        # Create playlist directories
         self.playlist1 = self.base_path / "Playlist1"
         self.playlist2 = self.base_path / "Playlist2"
         self.playlist1.mkdir()
         self.playlist2.mkdir()
 
     def teardown_method(self):
-        """Clean up temp directory"""
         shutil.rmtree(self.temp_dir)
 
     def test_hardlink_detection(self):
-        """Test that hard links are detected as same file"""
-        # Create original file
+        from main import link_track
+
         original = self.playlist1 / "Artist - Title.mp3"
         original.write_text("dummy content")
-
-        # Create hard link
         linked = self.playlist2 / "Artist - Title.mp3"
-        linked.hardlink_to(original)
 
-        # Verify they're hard linked
+        link_track(original, linked)
+
         assert linked.exists()
-        assert original.stat().st_ino == linked.stat().st_ino  # Same inode
-        assert original.read_text() == linked.read_text()
+        assert original.stat().st_ino == linked.stat().st_ino
+        assert linked.read_text() == "dummy content"
