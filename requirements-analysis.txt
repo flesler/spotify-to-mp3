@@ -1,0 +1,3 @@
+# Host-only: local MP3 analysis (Essentia). Skip on Pi — set AUDIO_ANALYSIS=0 there.
+# Install: INSTALL_AUDIO_ANALYSIS=1 ./scripts/setup-venv.sh
+essentia-tensorflow>=2.1b6.dev0

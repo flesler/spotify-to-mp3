@@ -36,6 +36,11 @@ python -m pip install --upgrade pip
 echo "Installing dependencies from requirements.txt..."
 pip install -r requirements.txt
 
+if [ "${INSTALL_AUDIO_ANALYSIS:-}" = "1" ]; then
+    echo "Installing optional audio analysis deps (host only)..."
+    pip install -r requirements-analysis.txt
+fi
+
 if command -v yt-dlp &> /dev/null || python -c "import yt_dlp" &> /dev/null; then
     echo "✅ yt-dlp is available"
 else

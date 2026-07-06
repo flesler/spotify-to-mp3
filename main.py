@@ -37,8 +37,8 @@ from mutagen.mp3 import MP3
 # Import API modules
 from api import API, looks_like_playlist_ref
 from library import LibraryIndex, get_txxx, link_track
-from spotify_meta import cache_for_mp3
 from oauth import OAuth
+from spotify_meta import cache_for_mp3
 from ytdlp_util import download_with_search_fallback, is_rate_limited, ytdlp_cmd
 
 # Load environment variables from .env file if it exists
