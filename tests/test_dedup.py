@@ -106,26 +106,6 @@ class TestCheckIfExists:
         assert not messy_file.exists()  # Old file renamed
 
 
-class TestAudioFingerprinting:
-    """Test audio fingerprinting functionality"""
-
-    def test_disabled_by_default(self):
-        """Test fingerprinting is disabled when ENABLE_AUDIO_FINGERPRINT=false"""
-        from main import ENABLE_AUDIO_FINGERPRINT, compute_audio_fingerprint
-
-        if not ENABLE_AUDIO_FINGERPRINT:
-            result = compute_audio_fingerprint(Path("/nonexistent.mp3"))
-            assert result is None
-
-    def test_graceful_degradation(self):
-        """Test graceful handling when fpcalc not found"""
-        from main import compute_audio_fingerprint
-
-        # Should return None without crashing
-        result = compute_audio_fingerprint(Path("/nonexistent.mp3"))
-        assert result is None
-
-
 class TestFuzzyMatching:
     """Additional fuzzy matching edge cases"""
 

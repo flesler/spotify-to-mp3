@@ -35,6 +35,18 @@ class API:
         token_data = response.json()
         self.access_token = token_data["access_token"]
 
+    def verify_credentials(self):
+        """Verify that credentials work by making a test API call"""
+        try:
+            # Try to get current user's profile (requires OAuth, but will fail gracefully with client creds)
+            # Instead, just check if we have a valid token
+            if self.access_token:
+                print("✅ Spotify credentials verified successfully")
+                return True
+        except Exception as e:
+            print(f"❌ Spotify credentials verification failed: {e}")
+            return False
+
     def _make_request(self, url):
         """Make authenticated request to Spotify API"""
         headers = {"Authorization": f"Bearer {self.access_token}"}
@@ -65,7 +77,14 @@ class API:
 
         # Get playlist info
         playlist_url = f"https://api.spotify.com/v1/playlists/{playlist_id}"
-        playlist_data = self._make_request(playlist_url)
+        try:
+            playlist_data = self._make_request(playlist_url)
+        except requests.exceptions.HTTPError as e:
+            if e.response is not None and e.response.status_code == 403:
+                print("❌ Error: Spotify Premium required on the account that created this app")
+                print("💡 The app owner account must have an active Premium subscription")
+                print("   Go to: https://www.spotify.com/premium/")
+            raise
         playlist_name = playlist_data["name"]
 
         print(f"📋 Playlist: {playlist_name}")

@@ -26,7 +26,7 @@ git clone git@github.com:flesler/spotify-to-mp3.git
 cd spotify-to-mp3
 
 # Run the setup script to create virtual environment and install dependencies
-./setup-venv.sh
+./scripts/setup-venv.sh
 
 # Activate the virtual environment
 source .venv/bin/activate
@@ -50,7 +50,7 @@ pip install yt-dlp
 
 ```bash
 # Automatically uses the project's virtual environment
-./run.sh <playlist_url_or_id> [options]
+./scripts/run.sh <playlist_url_or_id> [options]
 ```
 
 ### Option 2: Manual activation

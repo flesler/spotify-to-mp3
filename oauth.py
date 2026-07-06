@@ -4,11 +4,13 @@ Handles OAuth 2.0 authorization code flow with PKCE.
 """
 
 import base64
+import getpass
 import hashlib
 import http.server
 import json
 import os
 import secrets
+import socket
 import socketserver
 import string
 import time
@@ -20,14 +22,87 @@ from urllib.parse import parse_qs, urlencode, urlparse
 import requests
 
 
+def get_ssh_host_hint() -> str:
+    """Return the best hostname/IP for ssh user@host to reach this machine."""
+    hosts: list[str] = []
+
+    ssh_conn = os.environ.get("SSH_CONNECTION", "").split()
+    if len(ssh_conn) >= 3:
+        server_addr = ssh_conn[2]
+        if server_addr and server_addr not in ("127.0.0.1", "::1"):
+            hosts.append(server_addr)
+
+    hostname = socket.gethostname()
+    if hostname and hostname not in hosts:
+        hosts.append(hostname)
+
+    return hosts[0] if hosts else "localhost"
+
+
+def get_ssh_port_forward_command(port: int = 8888) -> str:
+    """Build an ssh -L command using the current user and host."""
+    user = getpass.getuser()
+    host = get_ssh_host_hint()
+    return f"ssh -L {port}:127.0.0.1:{port} {user}@{host}"
+
+
+def is_headless() -> bool:
+    """Detect environments where opening a browser locally won't work (SSH, Pi, CI)."""
+    override = os.environ.get("SPOTIFY_OAUTH_HEADLESS", "").lower()
+    if override in ("1", "true", "yes"):
+        return True
+    if override in ("0", "false", "no"):
+        return False
+
+    if os.environ.get("SSH_CONNECTION") and not os.environ.get("DISPLAY"):
+        return True
+
+    if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+        return True
+
+    return False
+
+
 class OAuth:
     """Handle Spotify OAuth 2.0 authentication for user-specific endpoints"""
 
-    def __init__(self, client_id, client_secret, redirect_uri="http://localhost:8888/callback"):
+    def __init__(self, client_id, client_secret, redirect_uri="http://127.0.0.1:8888/callback"):
         self.client_id = client_id
         self.client_secret = client_secret
         self.redirect_uri = redirect_uri
         self.token_file = Path.home() / ".config" / "spotify-to-mp3" / "token.json"
+
+    def verify_credentials(self):
+        """Verify that OAuth credentials work by refreshing or using cached token"""
+        try:
+            self.authenticate(interactive=False)
+            print("✅ OAuth credentials verified")
+            return True
+        except Exception as e:
+            print(f"❌ OAuth credential verification failed: {e}")
+            return False
+
+    def _validate_access_token(self, access_token: str) -> bool:
+        """Check access token against Spotify API (catches mis-saved expiry metadata)."""
+        try:
+            response = requests.get(
+                "https://api.spotify.com/v1/me", headers={"Authorization": f"Bearer {access_token}"}, timeout=10
+            )
+            return response.status_code == 200
+        except requests.RequestException:
+            return False
+
+    def _try_refresh(self, refresh_token: str) -> str | None:
+        """Refresh an expired token. Returns access token or None on failure."""
+        try:
+            print("🔄 Refreshing Spotify token...")
+            new_token_data = self._refresh_token(refresh_token)
+            self._save_token(new_token_data)
+            print("✅ Token refreshed")
+            return new_token_data["access_token"]
+        except Exception as e:
+            print(f"⚠️  Token refresh failed: {e}")
+            return None
 
     def _generate_code_verifier(self):
         """Generate a code verifier for PKCE"""
@@ -90,44 +165,79 @@ class OAuth:
         handler = CallbackHandler
         httpd = socketserver.TCPServer(("", port), handler)
 
-        server_thread = Thread(target=httpd.handle_request)
-        server_thread.daemon = True
+        # Don't use daemon thread - keep server alive
+        server_thread = Thread(target=httpd.serve_forever)
+        server_thread.daemon = False
         server_thread.start()
 
         return httpd, auth_result
 
-    def authenticate(self):
-        """Perform OAuth authentication and return access token"""
+    def authenticate(self, interactive: bool = True) -> str:
+        """Return a valid access token, refreshing cached tokens when needed."""
 
-        # Load existing token if available
         if self.token_file.exists():
             token_data = self._load_token()
-            if token_data and not self._is_token_expired(token_data):
-                print("✅ Using cached Spotify token")
-                return token_data["access_token"]
+            if token_data:
+                access_token = token_data.get("access_token")
+                refresh_token = token_data.get("refresh_token")
 
+                if access_token and not self._is_token_expired(token_data):
+                    if self._validate_access_token(access_token):
+                        print("✅ Using cached Spotify token")
+                        return access_token
+                    print("⚠️  Cached token rejected by Spotify API")
+
+                if refresh_token:
+                    refreshed = self._try_refresh(refresh_token)
+                    if refreshed:
+                        return refreshed
+
+        if not interactive:
+            raise RuntimeError(
+                "OAuth token expired and refresh failed. "
+                "Re-authenticate on a machine with a browser, or run with SSH port forwarding."
+            )
+
+        return self._interactive_authenticate()
+
+    def _interactive_authenticate(self) -> str:
+        """Full browser OAuth flow (opens browser or prints URL in headless mode)."""
         print("🔐 Authenticating with Spotify...")
 
-        # Generate PKCE parameters
         code_verifier = self._generate_code_verifier()
         code_challenge = self._generate_code_challenge(code_verifier)
         state = "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(16))
-
-        # Get authorization URL
         auth_url = self._get_auth_url(code_challenge, state)
 
-        # Open browser for user authentication
-        print("Opening browser for Spotify authentication...")
-        print(f"If browser doesn't open, visit: {auth_url}")
-        webbrowser.open(auth_url)
+        headless = is_headless()
+        parsed_redirect = urlparse(self.redirect_uri)
+        port = parsed_redirect.port or 8888
+        callback_url = f"http://127.0.0.1:{port}/callback"
 
-        # Start local server to receive callback
-        port = 8888
+        if headless:
+            ssh_cmd = get_ssh_port_forward_command(port)
+            print("\n" + "=" * 60)
+            print("HEADLESS MODE — open this URL in your browser:")
+            print(auth_url)
+            print()
+            if os.environ.get("SSH_CONNECTION"):
+                print("Reconnect your SSH session with port forwarding:")
+            else:
+                print("From your desktop, connect with port forwarding:")
+            print(f"  {ssh_cmd}")
+            print()
+            print(f"Waiting for callback on {callback_url} ...")
+            print("=" * 60 + "\n")
+        else:
+            print("Opening browser for Spotify authentication...")
+            print(f"If browser doesn't open, visit: {auth_url}")
+            webbrowser.open(auth_url)
+
+        port = parsed_redirect.port or 8888
         try:
             httpd, auth_result = self._start_local_server(port)
 
-            # Wait for callback (with timeout)
-            timeout = 120  # 2 minutes
+            timeout = 120
             start_time = time.time()
 
             while time.time() - start_time < timeout:
@@ -141,12 +251,9 @@ class OAuth:
             httpd.shutdown()
 
         except Exception as e:
-            raise Exception(f"Failed to receive authentication callback: {e}")
+            raise RuntimeError(f"Failed to receive authentication callback: {e}") from e
 
-        # Exchange authorization code for tokens
         token_data = self._exchange_code_for_token(auth_code, code_verifier)
-
-        # Save token
         self._save_token(token_data)
 
         return token_data["access_token"]
@@ -202,18 +309,41 @@ class OAuth:
             return None
 
     def _save_token(self, token_data):
-        """Save token to file"""
+        """Save token to file with calculated expires_at timestamp"""
+        if "expires_in" in token_data:
+            token_data["expires_at"] = time.time() + token_data["expires_in"]
+
         self.token_file.parent.mkdir(parents=True, exist_ok=True)
         with open(self.token_file, "w") as f:
             json.dump(token_data, f, indent=2)
 
     def _is_token_expired(self, token_data):
         """Check if token is expired or about to expire"""
-        expires_at = token_data.get("expires_at", 0)
-        current_time = time.time()
+        expires_at = token_data.get("expires_at")
+        if expires_at is None:
+            return True
 
         # Consider token expired if less than 5 minutes remaining
-        return current_time > (expires_at - 300)
+        return time.time() > (expires_at - 300)
+
+    @property
+    def _sync_state_file(self):
+        return self.token_file.parent / "liked-sync.json"
+
+    def _load_sync_state(self):
+        """Load set of previously synced liked-song Spotify IDs"""
+        try:
+            with open(self._sync_state_file, "r") as f:
+                data = json.load(f)
+            return set(data.get("synced_ids", []))
+        except (json.JSONDecodeError, FileNotFoundError):
+            return set()
+
+    def _save_sync_state(self, synced_ids):
+        """Persist synced liked-song Spotify IDs"""
+        self.token_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(self._sync_state_file, "w") as f:
+            json.dump({"synced_ids": sorted(synced_ids), "updated_at": time.time()}, f, indent=2)
 
     def get_liked_songs(self, limit=50, offset=0):
         """Get user's liked/saved tracks"""
@@ -231,40 +361,77 @@ class OAuth:
 
         return response.json()
 
-    def get_all_liked_songs(self):
-        """Get all liked songs with pagination"""
-        tracks = []
+    def get_all_liked_songs(self, incremental=True, max_tracks=None):
+        """Get liked songs with pagination.
+
+        When incremental=True (default), stops fetching once a page contains only
+        previously synced tracks (API returns newest likes first).
+        When max_tracks is set, stops once enough tracks are collected.
+        """
+        access_token = self.authenticate()
+
+        synced_ids = set() if not incremental else self._load_sync_state()
+        fetched_ids: set[str] = set()
+        new_tracks = []
         offset = 0
         limit = 50
 
-        print("📚 Fetching liked songs...")
+        if incremental and synced_ids:
+            print("📚 Checking for new liked songs...")
+        else:
+            print("📚 Fetching liked songs...")
 
         while True:
-            data = self.get_liked_songs(limit=limit, offset=offset)
+            url = "https://api.spotify.com/v1/me/tracks"
+            headers = {"Authorization": f"Bearer {access_token}"}
+            params = {"limit": min(limit, 50), "offset": offset}
+
+            response = requests.get(url, headers=headers, params=params)
+            response.raise_for_status()
+            data = response.json()
+
+            page_track_ids: list[str] = []
 
             for item in data["items"]:
                 track = item["track"]
                 if track and track["type"] == "track":
-                    artists = ", ".join([artist["name"] for artist in track["artists"]])
-                    tracks.append(
-                        {
-                            "id": track["id"],
-                            "name": track["name"],
-                            "artists": artists,
-                            "duration_ms": track["duration_ms"],
-                            "popularity": track.get("popularity", 0),
-                            "album": track.get("album", {}),
-                            "added_at": item.get("added_at"),
-                        }
-                    )
+                    track_id = track["id"]
+                    page_track_ids.append(track_id)
+                    fetched_ids.add(track_id)
 
-            print(f"  Fetched {len(tracks)} tracks...")
+                    if track_id not in synced_ids:
+                        artists = ", ".join([artist["name"] for artist in track["artists"]])
+                        new_tracks.append(
+                            {
+                                "id": track_id,
+                                "name": track["name"],
+                                "artists": artists,
+                                "duration_ms": track["duration_ms"],
+                                "popularity": track.get("popularity", 0),
+                                "album": track.get("album", {}),
+                                "added_at": item.get("added_at"),
+                            }
+                        )
 
-            # Check if there are more tracks
+            print(f"  Fetched {len(fetched_ids)} tracks ({len(new_tracks)} new)...")
+
+            if max_tracks and len(new_tracks) >= max_tracks:
+                new_tracks = new_tracks[:max_tracks]
+                break
+
+            if incremental and synced_ids and page_track_ids and all(tid in synced_ids for tid in page_track_ids):
+                print("  Reached previously synced tracks, stopping early")
+                break
+
             if data["next"]:
                 offset += limit
             else:
                 break
 
-        print(f"✅ Found {len(tracks)} liked songs")
-        return tracks
+        self._save_sync_state(synced_ids | fetched_ids)
+
+        if incremental and synced_ids:
+            print(f"✅ Found {len(new_tracks)} new liked songs")
+        else:
+            print(f"✅ Found {len(new_tracks)} liked songs")
+        return new_tracks

@@ -1,28 +1,41 @@
 #!/bin/bash
 set -e
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT_DIR"
+
 echo "🔧 Setting up Python virtual environment..."
 
-# Create virtual environment if it doesn't exist
+PYTHON=""
+for candidate in python3.13 python3.12 python3.11 python3; do
+    if command -v "$candidate" &> /dev/null; then
+        PYTHON="$candidate"
+        break
+    fi
+done
+
+if [ -z "$PYTHON" ]; then
+    echo "❌ python3 not found"
+    exit 1
+fi
+
+echo "Using $PYTHON ($($PYTHON --version))"
+
 if [ ! -d ".venv" ]; then
     echo "Creating virtual environment in .venv/"
-    python3 -m venv .venv
+    "$PYTHON" -m venv .venv
 else
     echo "Virtual environment already exists"
 fi
 
-# Activate virtual environment
 source .venv/bin/activate
 
-# Upgrade pip
 echo "Upgrading pip..."
 python -m pip install --upgrade pip
 
-# Install dependencies
 echo "Installing dependencies from requirements.txt..."
 pip install -r requirements.txt
 
-# Verify yt-dlp is available
 if command -v yt-dlp &> /dev/null || python -c "import yt_dlp" &> /dev/null; then
     echo "✅ yt-dlp is available"
 else

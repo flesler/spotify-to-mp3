@@ -18,7 +18,7 @@ if "VIRTUAL_ENV" not in os.environ:
         pass
     else:
         print("❌ Error: Virtual environment not found at .venv/")
-        print("Run: ./setup-venv.sh")
+        print("Run: ./scripts/setup-venv.sh")
         sys.exit(1)
 
 import argparse
@@ -30,7 +30,7 @@ from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
-from mutagen.id3 import APIC, TALB, TDRC, TIT2, TPE1, TPE2
+from mutagen.id3 import APIC, TALB, TDRC, TIT2, TPE1, TPE2, TXXX, WOAR, WOAS
 from mutagen.mp3 import MP3
 
 # Import API modules
@@ -60,11 +60,27 @@ if not MUSIC_DIR:
 # Download quality
 DOWNLOAD_QUALITY = os.getenv("DOWNLOAD_QUALITY", "192K")
 
-# Enable audio fingerprinting
-ENABLE_AUDIO_FINGERPRINT = os.getenv("ENABLE_AUDIO_FINGERPRINT", "false").lower() == "true"
-
 # Fuzzy matching threshold (0-100, higher = stricter)
 FUZZY_MATCH_THRESHOLD = 85
+
+
+def ytdlp_cmd() -> list[str]:
+    """Run yt-dlp from this Python environment, not a stale system binary on PATH."""
+    return [sys.executable, "-m", "yt_dlp"]
+
+
+def _ytdlp_error_message(stderr: str) -> str:
+    """Pick the most useful line from yt-dlp stderr (skip deprecation noise)."""
+    lines = [line.strip() for line in stderr.strip().splitlines() if line.strip()]
+    errors = [line for line in lines if line.startswith("ERROR:")]
+    if errors:
+        return errors[-1].removeprefix("ERROR:").strip()
+    for line in lines:
+        if "Deprecated Feature" in line or line.startswith("WARNING:"):
+            continue
+        return line
+    useful = [line for line in lines if "Deprecated Feature" not in line and not line.startswith("WARNING:")]
+    return useful[-1] if useful else "unknown error"
 
 
 def sanitize_filename(filename):
@@ -74,36 +90,6 @@ def sanitize_filename(filename):
     filename = re.sub(r"[^\w\s\-_\(\)\[\].]", "", filename)
     filename = re.sub(r"\s+", " ", filename).strip()
     return filename
-
-
-def compute_audio_fingerprint(filepath):
-    """Compute audio fingerprint using Chromaprint/AcoustID"""
-    if not ENABLE_AUDIO_FINGERPRINT:
-        return None
-
-    try:
-        import json
-        import subprocess
-
-        # Check if fpcalc is available
-        result = subprocess.run(["fpcalc", "-json", str(filepath)], capture_output=True, text=True, timeout=30)
-
-        if result.returncode == 0:
-            data = json.loads(result.stdout)
-            return data.get("fingerprint")
-        else:
-            print(f"   ⚠️  fpcalc failed: {result.stderr.strip()}")
-            return None
-    except FileNotFoundError:
-        # Use a module-level flag to avoid spamming the warning
-        if not globals().get("_FPCALC_WARNED", False):
-            print("   ⚠️  Audio fingerprinting disabled (fpcalc not found)")
-            print("   💡 Install with: sudo apt install fpcalc")
-            globals()["_FPCALC_WARNED"] = True
-        return None
-    except Exception as e:
-        print(f"   ⚠️  Fingerprint computation failed: {e}")
-        return None
 
 
 def fuzzy_match_filenames(spotify_name, existing_name):
@@ -159,14 +145,14 @@ def download_album_art(track):
     return None, track.get("album", {})
 
 
-def fix_mp3_metadata_smart(file_path, track):
+def fix_mp3_metadata_smart(file_path, track, youtube_id=None):
     """Intelligently fix MP3 metadata only if needed"""
     try:
         audio = MP3(file_path)
         if audio.tags is None:
             # No tags at all, need everything
             album_art_data, album_info = download_album_art(track)
-            set_mp3_metadata(file_path, track, album_art_data, album_info)
+            set_mp3_metadata(file_path, track, album_art_data, album_info, youtube_id=youtube_id)
             return
 
         # Check what's missing
@@ -174,9 +160,17 @@ def fix_mp3_metadata_smart(file_path, track):
         artist = audio.tags.get("TPE1")
         album = audio.tags.get("TALB")
         artwork = audio.tags.getall("APIC")  # Get all APIC frames
+        spotify_id = _get_txxx(audio.tags, "SPOTIFY_ID")
+        stored_youtube_id = _get_txxx(audio.tags, "YOUTUBE_ID")
 
         needs_metadata = (
-            not title or str(title[0]) != track["name"] or not artist or str(artist[0]) != track["artists"] or not album
+            not title
+            or str(title[0]) != track["name"]
+            or not artist
+            or str(artist[0]) != track["artists"]
+            or not album
+            or (track.get("id") and spotify_id != track["id"])
+            or (youtube_id and stored_youtube_id != youtube_id)
         )
 
         needs_artwork = not artwork or len(artwork) == 0
@@ -187,7 +181,7 @@ def fix_mp3_metadata_smart(file_path, track):
                 album_art_data, album_info = download_album_art(track)
             else:
                 album_info = track.get("album", {})
-            set_mp3_metadata(file_path, track, album_art_data, album_info)
+            set_mp3_metadata(file_path, track, album_art_data, album_info, youtube_id=youtube_id)
         else:
             print("   ✅ Metadata already complete")
 
@@ -195,10 +189,17 @@ def fix_mp3_metadata_smart(file_path, track):
         print(f"   ⚠️  Metadata check failed: {e}")
         # Fallback to full update
         album_art_data, album_info = download_album_art(track)
-        set_mp3_metadata(file_path, track, album_art_data, album_info)
+        set_mp3_metadata(file_path, track, album_art_data, album_info, youtube_id=youtube_id)
 
 
-def set_mp3_metadata(file_path, track, album_art_data=None, album_info=None):
+def _get_txxx(tags, desc: str) -> str | None:
+    for frame in tags.getall("TXXX"):
+        if frame.desc == desc:
+            return str(frame.text[0])
+    return None
+
+
+def set_mp3_metadata(file_path, track, album_art_data=None, album_info=None, youtube_id=None):
     """Set proper ID3 tags on MP3 file"""
     try:
         # Load the MP3 file
@@ -243,6 +244,15 @@ def set_mp3_metadata(file_path, track, album_art_data=None, album_info=None):
                 )
             )
 
+        spotify_id = track.get("id")
+        if spotify_id:
+            tags.setall("TXXX:SPOTIFY_ID", [TXXX(encoding=3, desc="SPOTIFY_ID", text=spotify_id)])
+            tags.setall("WOAR", [WOAR(url=f"https://open.spotify.com/track/{spotify_id}")])
+
+        if youtube_id:
+            tags.setall("TXXX:YOUTUBE_ID", [TXXX(encoding=3, desc="YOUTUBE_ID", text=youtube_id)])
+            tags.setall("WOAS", [WOAS(url=f"https://www.youtube.com/watch?v={youtube_id}")])
+
         # Save the tags
         audio.save()
 
@@ -269,19 +279,17 @@ def check_if_track_exists(artists, title, base_music_dir, auto_rename=True, dura
     1. Exact filename matching (fast path)
     2. Duration matching (±5s tolerance)
     3. Fuzzy filename matching (handles remixes, feat., etc.)
-    4. Audio fingerprinting (content-based, if enabled)
-
-    Args:
-        artists: Artist name(s)
-        title: Track title
-        base_music_dir: Base directory to search
-        auto_rename: Whether to rename files to clean format
-        duration_ms: Expected duration in milliseconds for duration matching
     """
     # Clean up artists and title for better matching
     clean_artists = sanitize_filename(artists).lower()
     clean_title = sanitize_filename(title).lower()
     clean_spotify_name = sanitize_filename(f"{artists} - {title}")
+    expected_filename = f"{clean_spotify_name}.mp3"
+
+    # Fast path: exact filename anywhere in library (single rglob pattern)
+    for mp3_file in Path(base_music_dir).rglob(expected_filename):
+        if mp3_file.is_file():
+            return _finalize_match(mp3_file, clean_spotify_name, auto_rename)
 
     candidates = []
 
@@ -309,7 +317,7 @@ def check_if_track_exists(artists, title, base_music_dir, auto_rename=True, dura
 
     candidates = list(seen_files.values())
 
-    # Phase 2: Verify candidates with duration and fingerprinting
+    # Phase 2: Verify candidates with duration
     verified = []
     for filepath, match_type, confidence in candidates:
         file_duration_ms = None
@@ -325,14 +333,6 @@ def check_if_track_exists(artists, title, base_music_dir, auto_rename=True, dura
             except Exception:
                 pass  # Can't read duration, skip duration check
 
-        # Audio fingerprinting (if enabled and we have a fuzzy match)
-        if ENABLE_AUDIO_FINGERPRINT and match_type == "fuzzy":
-            fingerprint = compute_audio_fingerprint(filepath)
-            # Note: In a full implementation, you'd compare fingerprints here
-            # For now, we just verify we can compute it
-            if fingerprint:
-                print(f"   🔍 Fingerprint computed for: {filepath.name}")
-
         verified.append((filepath, match_type, confidence, file_duration_ms))
 
     # Phase 3: Return best match
@@ -341,19 +341,18 @@ def check_if_track_exists(artists, title, base_music_dir, auto_rename=True, dura
 
     # Prefer exact matches over fuzzy
     best = max(verified, key=lambda x: (x[1] == "exact", x[2] or 0))
-    mp3_file = best[0]
+    return _finalize_match(best[0], clean_spotify_name, auto_rename)
 
-    # Check if it's already in clean format
-    current_name = mp3_file.stem  # filename without extension
+
+def _finalize_match(mp3_file, clean_spotify_name, auto_rename):
+    """Rename to clean format if needed, then return the file path."""
+    current_name = mp3_file.stem
     if current_name == clean_spotify_name:
-        return mp3_file  # Already clean, no rename needed
+        return mp3_file
 
-    # Auto-rename to clean Spotify format
     if auto_rename:
         new_filename = clean_spotify_name + ".mp3"
         new_path = mp3_file.parent / new_filename
-
-        # Avoid overwriting existing clean files
         if not new_path.exists():
             try:
                 mp3_file.rename(new_path)
@@ -457,7 +456,7 @@ def download_track(
     try:
         # yt-dlp command to search and download from YouTube
         cmd = [
-            "yt-dlp",
+            *ytdlp_cmd(),
             f"ytsearch1:{search_query}",  # Search for 1 result
             "--extract-audio",
             "--audio-format",
@@ -468,6 +467,7 @@ def download_track(
             str(playlist_dir) + "/" + sanitized_filename + ".%(ext)s",
             "--no-playlist",
             "--ignore-errors",
+            "--no-warnings",
             "--sleep-interval",
             "2",  # Sleep 2 seconds between downloads
             "--max-sleep-interval",
@@ -477,19 +477,21 @@ def download_track(
             "--fragment-retries",
             "3",  # Retry failed fragments
             "--abort-on-unavailable-fragment",  # Skip corrupted videos
+            "--no-progress",
+            "--write-info-json",
         ]
 
         # Run yt-dlp
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
 
         if result.returncode == 0:
+            output_path = Path(playlist_dir) / f"{sanitized_filename}.mp3"
+            info_json = Path(playlist_dir) / f"{sanitized_filename}.info.json"
+            youtube_id = _read_youtube_id(info_json)
             print(f"✅ Downloaded: {sanitized_filename}")
 
-            # Add proper metadata and album art
-            output_path = Path(playlist_dir) / f"{sanitized_filename}.mp3"
             if output_path.exists() and fix_metadata:
-                # Smart metadata fixing
-                fix_mp3_metadata_smart(output_path, track)
+                fix_mp3_metadata_smart(output_path, track, youtube_id=youtube_id)
 
             return True
         else:
@@ -510,6 +512,7 @@ def download_track(
                         ".tmp",
                         ".f4a",
                         ".opus",
+                        ".json",
                     ] or partial_file.name.endswith(".webm.part"):
                         try:
                             partial_file.unlink()
@@ -518,13 +521,10 @@ def download_track(
                             pass
 
             print(f"❌ Failed: {sanitized_filename}")
-            # Only show first line of error to avoid spam
-            error_lines = result.stderr.strip().split("\n")
-            if error_lines:
-                error_msg = error_lines[0]
+            error_msg = _ytdlp_error_message(result.stderr)
+            if error_msg:
                 print(f"   Error: {error_msg}")
 
-                # Check for rate limiting / blocking indicators
                 blocking_indicators = [
                     "No such file or directory",
                     "Unable to rename file",
@@ -536,7 +536,7 @@ def download_track(
                     "Video unavailable",
                 ]
 
-                if any(indicator in error_msg for indicator in blocking_indicators[:4]):  # Only critical errors
+                if any(indicator in error_msg for indicator in blocking_indicators[:4]):
                     print("\n🛑 Detected rate limiting/blocking. Stopping to avoid further issues.")
                     print("💡 Try again in 10-15 minutes, or run one playlist at a time.")
                     raise KeyboardInterrupt("Rate limited")
@@ -551,6 +551,25 @@ def download_track(
         return False
 
 
+def _read_youtube_id(info_json: Path) -> str | None:
+    """Read YouTube video ID from yt-dlp info json, then delete the sidecar file."""
+    if not info_json.exists():
+        return None
+    try:
+        import json
+
+        data = json.loads(info_json.read_text(encoding="utf-8"))
+        youtube_id = data.get("id")
+        return youtube_id if isinstance(youtube_id, str) and youtube_id else None
+    except Exception:
+        return None
+    finally:
+        try:
+            info_json.unlink()
+        except OSError:
+            pass
+
+
 def main():
     # Ensure we're running in a virtual environment
     if not os.environ.get("VIRTUAL_ENV"):
@@ -559,7 +578,7 @@ def main():
         print("   Please activate the venv first:")
         print("     source .venv/bin/activate")
         print("   Or use the wrapper script:")
-        print("     ./run.sh")
+        print("     ./scripts/run.sh")
         print()
 
     parser = argparse.ArgumentParser(
@@ -574,7 +593,10 @@ def main():
     )
 
     parser.add_argument(
-        "playlist", help="Spotify playlist URL, ID, name, folder path with playlist-id.txt, or 'liked' for liked songs"
+        "playlist",
+        nargs="?",
+        default=None,
+        help="Spotify playlist URL, ID, name, folder path with playlist-id.txt, or 'liked' for liked songs",
     )
     parser.add_argument(
         "--dry-run", action="store_true", help="Show what would be downloaded without actually downloading"
@@ -588,15 +610,76 @@ def main():
     parser.add_argument("--no-metadata", action="store_true", help="Don't fix metadata and artwork (default: enabled)")
     parser.add_argument("--limit", type=int, help="Limit number of tracks to download (useful for testing)")
     parser.add_argument("--export", action="store_true", help="Export track list to text file instead of downloading")
+    parser.add_argument(
+        "--verify", action="store_true", help="Verify Spotify credentials work without downloading anything"
+    )
+    parser.add_argument(
+        "--full", action="store_true", help="Full re-sync for liked songs (fetch entire library instead of incremental)"
+    )
 
     args = parser.parse_args()
     playlist_input = args.playlist
+
+    # --verify doesn't need playlist argument
+    if not args.verify and not playlist_input:
+        parser.error("playlist is required unless using --verify")
+
     dry_run = args.dry_run
     auto_rename = not args.no_rename
     auto_link = not args.no_link
     fix_metadata = not args.no_metadata
     limit = args.limit
     export_only = args.export
+    verify_only = args.verify
+    full_sync = args.full
+
+    # Handle --verify mode (no playlist needed)
+    if verify_only:
+        print("🔐 Verifying Spotify credentials...\n")
+
+        # Test with actual playlist fetch to verify Premium access
+        print("1️⃣  Testing client credentials with real playlist...")
+        try:
+            spotify = API(SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET)
+            # Use your test playlist
+            tracks, name = spotify.get_playlist_tracks("1lEAC324ya2EEQhpIcv0ai")
+            print(f"✅ Successfully fetched playlist: {name}")
+            print(f"   Found {len(tracks)} tracks")
+            client_ok = True
+        except Exception as e:
+            print(f"❌ Failed to fetch playlist: {e}")
+            client_ok = False
+
+        # Verify OAuth credentials (for liked songs)
+        print("\n2️⃣  Testing OAuth credentials (liked songs)...")
+        try:
+            oauth = OAuth(SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET)
+            if oauth.token_file.exists():
+                oauth.authenticate(interactive=False)
+                test_data = oauth.get_liked_songs(limit=1)
+                if test_data and test_data.get("items"):
+                    print("✅ Can access liked songs")
+                else:
+                    print("✅ OAuth works (no liked songs in library)")
+                oauth_ok = True
+            else:
+                print("⚠️  No OAuth token found")
+                print("   Run: python main.py liked")
+                oauth_ok = False
+        except Exception as e:
+            print(f"❌ OAuth verification failed: {e}")
+            oauth_ok = False
+
+        # Summary
+        print("\n" + "=" * 50)
+        if client_ok and oauth_ok:
+            print("✅ All credentials verified! Ready to download.")
+        elif client_ok:
+            print("✅ Client credentials work (public playlists available)")
+            print("⚠️  OAuth not configured (run: python main.py liked)")
+        else:
+            print("❌ Credentials invalid - check .env or upgrade account to Premium")
+        sys.exit(0)
 
     # Check if it's a folder path with playlist-id.txt
     input_path = Path(playlist_input)
@@ -612,10 +695,10 @@ def main():
     # Check if yt-dlp is installed (skip in dry-run mode)
     if not dry_run:
         try:
-            subprocess.run(["yt-dlp", "--version"], capture_output=True, check=True)
+            subprocess.run([*ytdlp_cmd(), "--version"], capture_output=True, check=True)
         except (subprocess.CalledProcessError, FileNotFoundError):
             print("❌ yt-dlp not found. Please install it:")
-            print("   pip3 install yt-dlp")
+            print("   ./scripts/setup-venv.sh")
             sys.exit(1)
 
     # Create music directory if it doesn't exist
@@ -632,13 +715,16 @@ def main():
             print("🔐 Requesting access to liked songs...")
             oauth = OAuth(SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET)
 
-            # Get all liked songs
-            tracks = oauth.get_all_liked_songs()
+            # Get liked songs (incremental by default)
+            tracks = oauth.get_all_liked_songs(incremental=not full_sync, max_tracks=limit)
             playlist_name = "Liked Songs"
 
             if not tracks:
-                print("❌ No liked songs found")
-                sys.exit(1)
+                if full_sync:
+                    print("❌ No liked songs found")
+                else:
+                    print("✅ No new liked songs to download")
+                sys.exit(0)
         else:
             # Initialize Spotify API with client credentials
             print("🔐 Authenticating with Spotify...")
