@@ -37,6 +37,7 @@ from mutagen.mp3 import MP3
 # Import API modules
 from api import API, looks_like_playlist_ref
 from library import LibraryIndex, get_txxx, link_track
+from spotify_meta import cache_for_mp3
 from oauth import OAuth
 from ytdlp_util import download_with_search_fallback, is_rate_limited, ytdlp_cmd
 
@@ -172,6 +173,12 @@ def fix_mp3_metadata_smart(file_path, track, youtube_id=None, library_index: Lib
 
     if library_index:
         library_index.note_file(Path(file_path), track.get("id"), youtube_id)
+
+    if track.get("id"):
+        try:
+            cache_for_mp3(Path(file_path), track)
+        except Exception as e:
+            print(f"   ⚠️  Spotify metadata cache failed: {e}")
 
 
 def set_mp3_metadata(file_path, track, album_art_data=None, album_info=None, youtube_id=None):
