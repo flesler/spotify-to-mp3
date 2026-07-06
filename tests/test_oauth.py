@@ -86,8 +86,6 @@ def test_authenticate_refreshes_expired_token(oauth):
 
 
 def test_incremental_sync_stops_at_known_page(oauth):
-    oauth._save_sync_state({"id1", "id2"})
-
     page1 = {
         "items": [
             {"track": {"id": "id1", "type": "track", "name": "A", "artists": [{"name": "X"}], "duration_ms": 1000}},
@@ -99,15 +97,13 @@ def test_incremental_sync_stops_at_known_page(oauth):
     with patch.object(oauth, "authenticate", return_value="token"):
         with patch("oauth.requests.get") as mock_get:
             mock_get.return_value = MagicMock(json=lambda: page1, raise_for_status=lambda: None)
-            tracks = oauth.get_all_liked_songs(incremental=True)
+            tracks = oauth.get_all_liked_songs(incremental=True, downloaded_ids={"id1", "id2"})
 
     assert tracks == []
     mock_get.assert_called_once()
 
 
 def test_incremental_sync_returns_new_tracks(oauth):
-    oauth._save_sync_state({"id1"})
-
     page1 = {
         "items": [
             {
@@ -127,14 +123,10 @@ def test_incremental_sync_returns_new_tracks(oauth):
     with patch.object(oauth, "authenticate", return_value="token"):
         with patch("oauth.requests.get") as mock_get:
             mock_get.return_value = MagicMock(json=lambda: page1, raise_for_status=lambda: None)
-            tracks = oauth.get_all_liked_songs(incremental=True)
+            tracks = oauth.get_all_liked_songs(incremental=True, downloaded_ids={"id1"})
 
     assert len(tracks) == 1
     assert tracks[0]["id"] == "id_new"
-
-    state = json.loads(oauth._sync_state_file.read_text())
-    assert "id_new" in state["synced_ids"]
-    assert "id1" in state["synced_ids"]
 
 
 def test_is_headless_ssh_without_display(monkeypatch):

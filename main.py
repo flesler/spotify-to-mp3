@@ -36,6 +36,7 @@ from mutagen.mp3 import MP3
 # Import API modules
 # Import API modules
 from api import API
+from library import LibraryIndex, get_txxx
 from oauth import OAuth
 
 # Load environment variables from .env file if it exists
@@ -145,58 +146,50 @@ def download_album_art(track):
     return None, track.get("album", {})
 
 
-def fix_mp3_metadata_smart(file_path, track, youtube_id=None):
+def fix_mp3_metadata_smart(file_path, track, youtube_id=None, library_index: LibraryIndex | None = None):
     """Intelligently fix MP3 metadata only if needed"""
     try:
         audio = MP3(file_path)
         if audio.tags is None:
-            # No tags at all, need everything
             album_art_data, album_info = download_album_art(track)
             set_mp3_metadata(file_path, track, album_art_data, album_info, youtube_id=youtube_id)
-            return
-
-        # Check what's missing
-        title = audio.tags.get("TIT2")
-        artist = audio.tags.get("TPE1")
-        album = audio.tags.get("TALB")
-        artwork = audio.tags.getall("APIC")  # Get all APIC frames
-        spotify_id = _get_txxx(audio.tags, "SPOTIFY_ID")
-        stored_youtube_id = _get_txxx(audio.tags, "YOUTUBE_ID")
-
-        needs_metadata = (
-            not title
-            or str(title[0]) != track["name"]
-            or not artist
-            or str(artist[0]) != track["artists"]
-            or not album
-            or (track.get("id") and spotify_id != track["id"])
-            or (youtube_id and stored_youtube_id != youtube_id)
-        )
-
-        needs_artwork = not artwork or len(artwork) == 0
-
-        if needs_metadata or needs_artwork:
-            album_art_data, album_info = None, None
-            if needs_artwork:
-                album_art_data, album_info = download_album_art(track)
-            else:
-                album_info = track.get("album", {})
-            set_mp3_metadata(file_path, track, album_art_data, album_info, youtube_id=youtube_id)
         else:
-            print("   ✅ Metadata already complete")
+            title = audio.tags.get("TIT2")
+            artist = audio.tags.get("TPE1")
+            album = audio.tags.get("TALB")
+            artwork = audio.tags.getall("APIC")
+            spotify_id = get_txxx(audio.tags, "SPOTIFY_ID")
+            stored_youtube_id = get_txxx(audio.tags, "YOUTUBE_ID")
+
+            needs_metadata = (
+                not title
+                or str(title[0]) != track["name"]
+                or not artist
+                or str(artist[0]) != track["artists"]
+                or not album
+                or (track.get("id") and spotify_id != track["id"])
+                or (youtube_id and stored_youtube_id != youtube_id)
+            )
+
+            needs_artwork = not artwork or len(artwork) == 0
+
+            if needs_metadata or needs_artwork:
+                album_art_data, album_info = None, None
+                if needs_artwork:
+                    album_art_data, album_info = download_album_art(track)
+                else:
+                    album_info = track.get("album", {})
+                set_mp3_metadata(file_path, track, album_art_data, album_info, youtube_id=youtube_id)
+            else:
+                print("   ✅ Metadata already complete")
 
     except Exception as e:
         print(f"   ⚠️  Metadata check failed: {e}")
-        # Fallback to full update
         album_art_data, album_info = download_album_art(track)
         set_mp3_metadata(file_path, track, album_art_data, album_info, youtube_id=youtube_id)
 
-
-def _get_txxx(tags, desc: str) -> str | None:
-    for frame in tags.getall("TXXX"):
-        if frame.desc == desc:
-            return str(frame.text[0])
-    return None
+    if library_index:
+        library_index.note_file(Path(file_path), track.get("id"), youtube_id)
 
 
 def set_mp3_metadata(file_path, track, album_art_data=None, album_info=None, youtube_id=None):
@@ -272,24 +265,35 @@ def set_mp3_metadata(file_path, track, album_art_data=None, album_info=None, you
         return False
 
 
-def check_if_track_exists(artists, title, base_music_dir, auto_rename=True, duration_ms=None):
+def check_if_track_exists(
+    artists, title, base_music_dir, auto_rename=True, duration_ms=None, spotify_id=None, library_index=None
+):
     """Check if a track already exists anywhere in the music directory
 
     Uses multiple strategies:
-    1. Exact filename matching (fast path)
-    2. Duration matching (±5s tolerance)
-    3. Fuzzy filename matching (handles remixes, feat., etc.)
+    1. Spotify ID in ID3 tags (fast, exact)
+    2. Exact filename matching
+    3. Duration matching (±5s tolerance)
+    4. Fuzzy filename matching (handles remixes, feat., etc.)
     """
-    # Clean up artists and title for better matching
     clean_artists = sanitize_filename(artists).lower()
     clean_title = sanitize_filename(title).lower()
     clean_spotify_name = sanitize_filename(f"{artists} - {title}")
     expected_filename = f"{clean_spotify_name}.mp3"
 
+    if spotify_id and library_index:
+        match = library_index.find_by_spotify_id(spotify_id)
+        if match:
+            path = _finalize_match(match, clean_spotify_name, auto_rename, library_index)
+            return path, "spotify id"
+
     # Fast path: exact filename anywhere in library (single rglob pattern)
     for mp3_file in Path(base_music_dir).rglob(expected_filename):
         if mp3_file.is_file():
-            return _finalize_match(mp3_file, clean_spotify_name, auto_rename)
+            result = _finalize_match(mp3_file, clean_spotify_name, auto_rename, library_index)
+            if library_index and spotify_id:
+                library_index.note_file(result, spotify_id=spotify_id)
+            return result, "filename"
 
     candidates = []
 
@@ -341,10 +345,14 @@ def check_if_track_exists(artists, title, base_music_dir, auto_rename=True, dura
 
     # Prefer exact matches over fuzzy
     best = max(verified, key=lambda x: (x[1] == "exact", x[2] or 0))
-    return _finalize_match(best[0], clean_spotify_name, auto_rename)
+    result = _finalize_match(best[0], clean_spotify_name, auto_rename, library_index)
+    if library_index and spotify_id:
+        library_index.note_file(result, spotify_id=spotify_id)
+    reason = "fuzzy match" if best[1] == "fuzzy" else "filename"
+    return result, reason
 
 
-def _finalize_match(mp3_file, clean_spotify_name, auto_rename):
+def _finalize_match(mp3_file, clean_spotify_name, auto_rename, library_index=None):
     """Rename to clean format if needed, then return the file path."""
     current_name = mp3_file.stem
     if current_name == clean_spotify_name:
@@ -355,8 +363,11 @@ def _finalize_match(mp3_file, clean_spotify_name, auto_rename):
         new_path = mp3_file.parent / new_filename
         if not new_path.exists():
             try:
+                old_key = library_index._rel_key(mp3_file) if library_index else None
                 mp3_file.rename(new_path)
                 print(f"🔄 Renamed: {mp3_file.name} → {new_filename}")
+                if library_index and old_key:
+                    library_index.rename_file(old_key, new_path)
                 return new_path
             except Exception as e:
                 print(f"⚠️  Rename failed: {e}")
@@ -366,7 +377,15 @@ def _finalize_match(mp3_file, clean_spotify_name, auto_rename):
 
 
 def download_track(
-    track, playlist_dir, base_music_dir, spotify_api, dry_run=False, auto_rename=True, auto_link=True, fix_metadata=True
+    track,
+    playlist_dir,
+    base_music_dir,
+    spotify_api,
+    dry_run=False,
+    auto_rename=True,
+    auto_link=True,
+    fix_metadata=True,
+    library_index: LibraryIndex | None = None,
 ):
     """Download a single track using yt-dlp"""
     artists = track["artists"]
@@ -377,25 +396,37 @@ def download_track(
     sanitized_filename = sanitize_filename(f"{artists} - {title}")
 
     # Check if file already exists anywhere
-    existing_file = check_if_track_exists(artists, title, base_music_dir, auto_rename, track.get("duration_ms"))
-    if existing_file:
+    match = check_if_track_exists(
+        artists,
+        title,
+        base_music_dir,
+        auto_rename,
+        track.get("duration_ms"),
+        spotify_id=track.get("id"),
+        library_index=library_index,
+    )
+    if match:
+        existing_file, match_reason = match
+        rel_path = existing_file.relative_to(base_music_dir)
         # Check if it's already in the target playlist directory
         target_path = Path(playlist_dir) / f"{sanitized_filename}.mp3"
         if existing_file.parent != Path(playlist_dir) and auto_link:
             # File exists elsewhere, create hard link in playlist directory
             if not target_path.exists():
                 if dry_run:
-                    print(f"🔗 Would link: {existing_file.relative_to(base_music_dir)} → {target_path.name}")
+                    print(f"⏭️  Skipped ({match_reason}): {rel_path}")
+                    print(f"🔗 Would link → {target_path.name}")
                     if fix_metadata:
                         print("   🎨 Would fix metadata")
                     return "skipped"
                 try:
                     target_path.hardlink_to(existing_file)
-                    print(f"🔗 Linked: {existing_file.relative_to(base_music_dir)} → {target_path.name}")
+                    print(f"⏭️  Skipped ({match_reason}): {rel_path}")
+                    print(f"🔗 Linked → {target_path.name}")
 
                     # Fix metadata on the linked file
                     if fix_metadata:
-                        fix_mp3_metadata_smart(target_path, track)
+                        fix_mp3_metadata_smart(target_path, track, library_index=library_index)
 
                     return "skipped"
                 except Exception:
@@ -404,31 +435,32 @@ def download_track(
                         import shutil
 
                         shutil.copy2(existing_file, target_path)
-                        print(f"📋 Copied: {existing_file.relative_to(base_music_dir)} → {target_path.name}")
+                        print(f"⏭️  Skipped ({match_reason}): {rel_path}")
+                        print(f"📋 Copied → {target_path.name}")
 
                         # Fix metadata on the copied file
                         if fix_metadata:
-                            fix_mp3_metadata_smart(target_path, track)
+                            fix_mp3_metadata_smart(target_path, track, library_index=library_index)
 
                         return "skipped"
                     except Exception as e2:
                         print(f"⚠️  Link/copy failed: {e2}")
             else:
-                print(f"⏭️  Already in playlist: {target_path.name}")
+                print(f"⏭️  Skipped ({match_reason}): {rel_path} (already in playlist)")
 
                 # Still fix metadata if needed
                 if fix_metadata and not dry_run:
-                    fix_mp3_metadata_smart(target_path, track)
+                    fix_mp3_metadata_smart(target_path, track, library_index=library_index)
                 elif fix_metadata and dry_run:
                     print("   🎨 Would fix metadata")
 
                 return "skipped"
         else:
-            print(f"⏭️  Exists: {existing_file.relative_to(base_music_dir)}")
+            print(f"⏭️  Skipped ({match_reason}): {rel_path}")
 
             # Fix metadata on existing file
             if fix_metadata and not dry_run:
-                fix_mp3_metadata_smart(existing_file, track)
+                fix_mp3_metadata_smart(existing_file, track, library_index=library_index)
             elif fix_metadata and dry_run:
                 print("   🎨 Would fix metadata")
 
@@ -437,11 +469,11 @@ def download_track(
     # Check if file exists in the target playlist directory
     output_path = Path(playlist_dir) / f"{sanitized_filename}.mp3"
     if output_path.exists():
-        print(f"⏭️  Exists in playlist dir: {sanitized_filename}")
+        print(f"⏭️  Skipped (in playlist dir): {sanitized_filename}.mp3")
 
         # Fix metadata if needed
         if fix_metadata and not dry_run:
-            fix_mp3_metadata_smart(output_path, track)
+            fix_mp3_metadata_smart(output_path, track, library_index=library_index)
         elif fix_metadata and dry_run:
             print("   🎨 Would fix metadata")
 
@@ -491,7 +523,7 @@ def download_track(
             print(f"✅ Downloaded: {sanitized_filename}")
 
             if output_path.exists() and fix_metadata:
-                fix_mp3_metadata_smart(output_path, track, youtube_id=youtube_id)
+                fix_mp3_metadata_smart(output_path, track, youtube_id=youtube_id, library_index=library_index)
 
             return True
         else:
@@ -705,6 +737,9 @@ def main():
     music_dir = Path(MUSIC_DIR)
     music_dir.mkdir(parents=True, exist_ok=True)
 
+    library_index = LibraryIndex(music_dir)
+    library_index.build()
+
     try:
         # Check if user wants liked songs
         is_liked_songs = playlist_input.lower() in ["liked", "saved", "likes"]
@@ -716,7 +751,9 @@ def main():
             oauth = OAuth(SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET)
 
             # Get liked songs (incremental by default)
-            tracks = oauth.get_all_liked_songs(incremental=not full_sync, max_tracks=limit)
+            tracks = oauth.get_all_liked_songs(
+                incremental=not full_sync, max_tracks=limit, downloaded_ids=library_index.spotify_ids()
+            )
             playlist_name = "Liked Songs"
 
             if not tracks:
@@ -795,9 +832,17 @@ def main():
         skipped = 0
 
         for i, track in enumerate(tracks, 1):
-            print(f"\n[{i}/{len(tracks)}] ", end="")
+            print(f"\n[{i}/{len(tracks)}] {track['artists']} - {track['name']}")
             result = download_track(
-                track, playlist_dir, MUSIC_DIR, spotify, dry_run, auto_rename, auto_link, fix_metadata
+                track,
+                playlist_dir,
+                MUSIC_DIR,
+                spotify,
+                dry_run,
+                auto_rename,
+                auto_link,
+                fix_metadata,
+                library_index=library_index,
             )
             if result == "skipped":
                 skipped += 1
@@ -845,6 +890,8 @@ def main():
     except Exception as e:
         print(f"💥 Error: {e}")
         sys.exit(1)
+    finally:
+        library_index.save()
 
 
 if __name__ == "__main__":

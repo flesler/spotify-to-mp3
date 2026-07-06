@@ -326,57 +326,21 @@ class OAuth:
         # Consider token expired if less than 5 minutes remaining
         return time.time() > (expires_at - 300)
 
-    @property
-    def _sync_state_file(self):
-        return self.token_file.parent / "liked-sync.json"
-
-    def _load_sync_state(self):
-        """Load set of previously synced liked-song Spotify IDs"""
-        try:
-            with open(self._sync_state_file, "r") as f:
-                data = json.load(f)
-            return set(data.get("synced_ids", []))
-        except (json.JSONDecodeError, FileNotFoundError):
-            return set()
-
-    def _save_sync_state(self, synced_ids):
-        """Persist synced liked-song Spotify IDs"""
-        self.token_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(self._sync_state_file, "w") as f:
-            json.dump({"synced_ids": sorted(synced_ids), "updated_at": time.time()}, f, indent=2)
-
-    def get_liked_songs(self, limit=50, offset=0):
-        """Get user's liked/saved tracks"""
-        access_token = self.authenticate()
-
-        url = "https://api.spotify.com/v1/me/tracks"
-        headers = {"Authorization": f"Bearer {access_token}"}
-        params = {
-            "limit": min(limit, 50),  # Max 50 per request
-            "offset": offset,
-        }
-
-        response = requests.get(url, headers=headers, params=params)
-        response.raise_for_status()
-
-        return response.json()
-
-    def get_all_liked_songs(self, incremental=True, max_tracks=None):
+    def get_all_liked_songs(self, incremental=True, max_tracks=None, downloaded_ids: set[str] | None = None):
         """Get liked songs with pagination.
 
-        When incremental=True (default), stops fetching once a page contains only
-        previously synced tracks (API returns newest likes first).
-        When max_tracks is set, stops once enough tracks are collected.
+        Uses downloaded_ids (Spotify IDs found in local MP3 tags) for incremental sync.
+        When incremental=True, stops API pagination once a page is entirely on disk.
         """
         access_token = self.authenticate()
 
-        synced_ids = set() if not incremental else self._load_sync_state()
-        fetched_ids: set[str] = set()
+        on_disk = downloaded_ids if downloaded_ids is not None else set()
         new_tracks = []
         offset = 0
         limit = 50
+        fetched = 0
 
-        if incremental and synced_ids:
+        if incremental and on_disk:
             print("📚 Checking for new liked songs...")
         else:
             print("📚 Fetching liked songs...")
@@ -397,30 +361,32 @@ class OAuth:
                 if track and track["type"] == "track":
                     track_id = track["id"]
                     page_track_ids.append(track_id)
-                    fetched_ids.add(track_id)
+                    fetched += 1
 
-                    if track_id not in synced_ids:
-                        artists = ", ".join([artist["name"] for artist in track["artists"]])
-                        new_tracks.append(
-                            {
-                                "id": track_id,
-                                "name": track["name"],
-                                "artists": artists,
-                                "duration_ms": track["duration_ms"],
-                                "popularity": track.get("popularity", 0),
-                                "album": track.get("album", {}),
-                                "added_at": item.get("added_at"),
-                            }
-                        )
+                    if incremental and track_id in on_disk:
+                        continue
 
-            print(f"  Fetched {len(fetched_ids)} tracks ({len(new_tracks)} new)...")
+                    artists = ", ".join([artist["name"] for artist in track["artists"]])
+                    new_tracks.append(
+                        {
+                            "id": track_id,
+                            "name": track["name"],
+                            "artists": artists,
+                            "duration_ms": track["duration_ms"],
+                            "popularity": track.get("popularity", 0),
+                            "album": track.get("album", {}),
+                            "added_at": item.get("added_at"),
+                        }
+                    )
+
+            print(f"  Fetched {fetched} tracks ({len(new_tracks)} to process)...")
 
             if max_tracks and len(new_tracks) >= max_tracks:
                 new_tracks = new_tracks[:max_tracks]
                 break
 
-            if incremental and synced_ids and page_track_ids and all(tid in synced_ids for tid in page_track_ids):
-                print("  Reached previously synced tracks, stopping early")
+            if incremental and on_disk and page_track_ids and all(tid in on_disk for tid in page_track_ids):
+                print("  Reached songs already on disk, stopping early")
                 break
 
             if data["next"]:
@@ -428,10 +394,21 @@ class OAuth:
             else:
                 break
 
-        self._save_sync_state(synced_ids | fetched_ids)
-
-        if incremental and synced_ids:
+        if incremental and on_disk:
             print(f"✅ Found {len(new_tracks)} new liked songs")
         else:
             print(f"✅ Found {len(new_tracks)} liked songs")
         return new_tracks
+
+    def get_liked_songs(self, limit=50, offset=0):
+        """Get user's liked/saved tracks"""
+        access_token = self.authenticate()
+
+        url = "https://api.spotify.com/v1/me/tracks"
+        headers = {"Authorization": f"Bearer {access_token}"}
+        params = {"limit": min(limit, 50), "offset": offset}
+
+        response = requests.get(url, headers=headers, params=params)
+        response.raise_for_status()
+
+        return response.json()

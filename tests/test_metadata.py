@@ -30,7 +30,8 @@ def tagged_mp3(tmp_path):
 
 
 def test_set_mp3_metadata_writes_spotify_and_youtube_ids(tagged_mp3):
-    from main import _get_txxx, set_mp3_metadata
+    from library import get_txxx
+    from main import set_mp3_metadata
 
     track = {
         "id": "spotifyTrack123",
@@ -43,8 +44,8 @@ def test_set_mp3_metadata_writes_spotify_and_youtube_ids(tagged_mp3):
 
     tags = MP3(tagged_mp3).tags
     assert tags is not None
-    assert _get_txxx(tags, "SPOTIFY_ID") == "spotifyTrack123"
-    assert _get_txxx(tags, "YOUTUBE_ID") == "youtubeVid456"
+    assert get_txxx(tags, "SPOTIFY_ID") == "spotifyTrack123"
+    assert get_txxx(tags, "YOUTUBE_ID") == "youtubeVid456"
     assert tags.getall("WOAR")[0].url == "https://open.spotify.com/track/spotifyTrack123"
     assert tags.getall("WOAS")[0].url == "https://www.youtube.com/watch?v=youtubeVid456"
 

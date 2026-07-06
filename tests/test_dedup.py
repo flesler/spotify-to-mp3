@@ -74,17 +74,18 @@ class TestCheckIfExists:
         test_file = self.base_path / "Artist - Title.mp3"
         test_file.touch()
 
-        result = check_if_track_exists(
+        result, reason = check_if_track_exists(
             artists="Artist", title="Title", base_music_dir=self.base_path, auto_rename=False
         )
 
         assert result == test_file
+        assert reason == "filename"
 
     def test_no_match_returns_none(self):
         """Test that non-existent track returns None"""
         from main import check_if_track_exists
 
-        result = check_if_track_exists(
+        result, reason = check_if_track_exists(
             artists="Unknown", title="Track", base_music_dir=self.base_path, auto_rename=False
         )
 
@@ -98,7 +99,9 @@ class TestCheckIfExists:
         messy_file = self.base_path / "artist_TITLE_remix.mp3"
         messy_file.touch()
 
-        result = check_if_track_exists(artists="Artist", title="Title", base_music_dir=self.base_path, auto_rename=True)
+        result, reason = check_if_track_exists(
+            artists="Artist", title="Title", base_music_dir=self.base_path, auto_rename=True
+        )
 
         # Should rename to clean format
         expected = self.base_path / "Artist - Title.mp3"
@@ -198,7 +201,7 @@ class TestDurationMatching:
 
         # Note: This test would need actual MP3 with duration metadata
         # For now, it verifies the function doesn't crash with duration param
-        result = check_if_track_exists(
+        result, reason = check_if_track_exists(
             artists="Artist",
             title="Title",
             base_music_dir=self.base_path,
