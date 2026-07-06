@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environment
+.venv/
+venv/
+env/
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Music files (don't commit downloads)
+Music/
+*.mp3
+*.webm
+*.m4a
+
+# Example config (safe to commit)
+!config.example.env
+
+# Logs
+*.log
