@@ -204,6 +204,14 @@ class LibraryIndex:
     def spotify_ids(self) -> set[str]:
         return set(self.tracks.keys())
 
+    def lookup_spotify_id(self, spotify_id: str) -> Path | None:
+        """Fast lookup from JSON cache; verifies the file exists (no full library scan)."""
+        for key in self._load_cache().get("tracks", {}).get(spotify_id, {}).get("paths", []):
+            path = self.music_dir / key
+            if path.is_file():
+                return path.resolve()
+        return None
+
     def find_by_spotify_id(self, spotify_id: str) -> Path | None:
         paths = self.tracks.get(spotify_id, {}).get("paths", [])
         for key in paths:
