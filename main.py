@@ -38,6 +38,7 @@ from mutagen.mp3 import MP3
 from api import API, looks_like_playlist_ref
 from library import LibraryIndex, get_txxx
 from oauth import OAuth
+from ytdlp_util import download_with_search_fallback, is_rate_limited, ytdlp_cmd
 
 # Load environment variables from .env file if it exists
 load_dotenv()
@@ -64,12 +65,8 @@ DOWNLOAD_QUALITY = os.getenv("DOWNLOAD_QUALITY", "192K")
 # Fuzzy matching threshold (0-100, higher = stricter)
 FUZZY_MATCH_THRESHOLD = 85
 
-from ytdlp_util import (
-    download_with_search_fallback,
-    is_rate_limited,
-    ytdlp_cmd,
-    ytdlp_error_message,
-)
+
+def sanitize_filename(filename):
     """Remove/replace characters that are problematic for filenames"""
     # Replace problematic characters
     filename = re.sub(r'[<>:"/\\|?*]', "", filename)
@@ -471,94 +468,29 @@ def download_track(
     print(f"🔍 Searching: {search_query}")
 
     try:
-        # yt-dlp command to search and download from YouTube
-        cmd = [
-            *ytdlp_cmd(),
-            f"ytsearch1:{search_query}",  # Search for 1 result
-            "--extract-audio",
-            "--audio-format",
-            "mp3",
-            "--audio-quality",
-            DOWNLOAD_QUALITY,
-            "--output",
-            str(playlist_dir) + "/" + sanitized_filename + ".%(ext)s",
-            "--no-playlist",
-            "--ignore-errors",
-            "--no-warnings",
-            "--sleep-interval",
-            "2",  # Sleep 2 seconds between downloads
-            "--max-sleep-interval",
-            "5",  # Random sleep up to 5 seconds
-            "--retries",
-            "3",  # Retry failed downloads 3 times
-            "--fragment-retries",
-            "3",  # Retry failed fragments
-            "--abort-on-unavailable-fragment",  # Skip corrupted videos
-            "--no-progress",
-            "--write-info-json",
-        ]
+        ok, youtube_id, error_msg = download_with_search_fallback(
+            search_query, Path(playlist_dir), sanitized_filename, DOWNLOAD_QUALITY
+        )
 
-        # Run yt-dlp
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-
-        if result.returncode == 0:
+        if ok:
             output_path = Path(playlist_dir) / f"{sanitized_filename}.mp3"
-            info_json = Path(playlist_dir) / f"{sanitized_filename}.info.json"
-            youtube_id = _read_youtube_id(info_json)
             print(f"✅ Downloaded: {sanitized_filename}")
 
             if output_path.exists() and fix_metadata:
                 fix_mp3_metadata_smart(output_path, track, youtube_id=youtube_id, library_index=library_index)
 
             return True
-        else:
-            # Clean up any partial downloads - be more aggressive with cleanup
-            cleanup_patterns = [
-                f"{sanitized_filename}.*",  # Exact filename matches
-                f"*{sanitized_filename.split(' - ')[-1]}*",  # Match by song title
-            ]
 
-            for pattern in cleanup_patterns:
-                partial_files = list(Path(playlist_dir).glob(pattern))
-                for partial_file in partial_files:
-                    # Remove any non-mp3 files that might be leftover
-                    if partial_file.suffix in [
-                        ".part",
-                        ".webm",
-                        ".m4a",
-                        ".tmp",
-                        ".f4a",
-                        ".opus",
-                        ".json",
-                    ] or partial_file.name.endswith(".webm.part"):
-                        try:
-                            partial_file.unlink()
-                            print(f"   🗑️  Cleaned: {partial_file.name}")
-                        except Exception:
-                            pass
+        print(f"❌ Failed: {sanitized_filename}")
+        if error_msg:
+            print(f"   Error: {error_msg}")
 
-            print(f"❌ Failed: {sanitized_filename}")
-            error_msg = _ytdlp_error_message(result.stderr)
-            if error_msg:
-                print(f"   Error: {error_msg}")
+        if is_rate_limited(error_msg):
+            print("\n🛑 Detected rate limiting/blocking. Stopping to avoid further issues.")
+            print("💡 Try again in 10-15 minutes, or run one playlist at a time.")
+            raise KeyboardInterrupt("Rate limited")
 
-                blocking_indicators = [
-                    "No such file or directory",
-                    "Unable to rename file",
-                    "HTTP Error 429",
-                    "Too Many Requests",
-                    "Sign in to confirm you're not a bot",
-                    "This video is not available",
-                    "Private video",
-                    "Video unavailable",
-                ]
-
-                if any(indicator in error_msg for indicator in blocking_indicators[:4]):
-                    print("\n🛑 Detected rate limiting/blocking. Stopping to avoid further issues.")
-                    print("💡 Try again in 10-15 minutes, or run one playlist at a time.")
-                    raise KeyboardInterrupt("Rate limited")
-
-            return False
+        return False
 
     except subprocess.TimeoutExpired:
         print(f"⏰ Timeout: {sanitized_filename}")
@@ -566,25 +498,6 @@ def download_track(
     except Exception as e:
         print(f"💥 Error downloading {sanitized_filename}: {e}")
         return False
-
-
-def _read_youtube_id(info_json: Path) -> str | None:
-    """Read YouTube video ID from yt-dlp info json, then delete the sidecar file."""
-    if not info_json.exists():
-        return None
-    try:
-        import json
-
-        data = json.loads(info_json.read_text(encoding="utf-8"))
-        youtube_id = data.get("id")
-        return youtube_id if isinstance(youtube_id, str) and youtube_id else None
-    except Exception:
-        return None
-    finally:
-        try:
-            info_json.unlink()
-        except OSError:
-            pass
 
 
 def main():

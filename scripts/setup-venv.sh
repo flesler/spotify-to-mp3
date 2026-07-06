@@ -44,6 +44,15 @@ else
     echo "   or: sudo apt-get install yt-dlp"
 fi
 
+if command -v node &> /dev/null; then
+    echo "✅ Node.js found ($(node --version)) — used by yt-dlp for YouTube"
+elif command -v deno &> /dev/null; then
+    echo "✅ Deno found — used by yt-dlp for YouTube"
+else
+    echo "⚠️  No JS runtime for yt-dlp (node or deno). YouTube downloads may fail with 403."
+    echo "   Install Node: https://nodejs.org/ or: nvm install --lts"
+fi
+
 echo ""
 echo "✅ Virtual environment setup complete!"
 echo ""

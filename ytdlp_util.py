@@ -101,13 +101,7 @@ def search_youtube_videos(query: str, limit: int = SEARCH_RESULT_LIMIT) -> list[
 
 def download_youtube_video(video_id: str, output_template: str, quality: str) -> subprocess.CompletedProcess:
     url = f"https://www.youtube.com/watch?v={video_id}"
-    cmd = [
-        *ytdlp_cmd(),
-        url,
-        "--output",
-        output_template,
-        *ytdlp_base_args(quality),
-    ]
+    cmd = [*ytdlp_cmd(), url, "--output", output_template, *ytdlp_base_args(quality)]
     return subprocess.run(cmd, capture_output=True, text=True, timeout=300)
 
 
@@ -129,10 +123,7 @@ def read_youtube_id(info_json: Path) -> str | None:
 
 
 def cleanup_partial_downloads(playlist_dir: Path, sanitized_filename: str):
-    cleanup_patterns = [
-        f"{sanitized_filename}.*",
-        f"*{sanitized_filename.split(' - ')[-1]}*",
-    ]
+    cleanup_patterns = [f"{sanitized_filename}.*", f"*{sanitized_filename.split(' - ')[-1]}*"]
     extensions = {".part", ".webm", ".m4a", ".tmp", ".f4a", ".opus", ".json"}
 
     for pattern in cleanup_patterns:

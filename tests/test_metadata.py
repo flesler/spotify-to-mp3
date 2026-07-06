@@ -51,10 +51,10 @@ def test_set_mp3_metadata_writes_spotify_and_youtube_ids(tagged_mp3):
 
 
 def test_read_youtube_id_deletes_sidecar(tmp_path):
-    from main import _read_youtube_id
+    from ytdlp_util import read_youtube_id
 
     info_json = tmp_path / "song.info.json"
     info_json.write_text('{"id": "abc123xyz"}', encoding="utf-8")
 
-    assert _read_youtube_id(info_json) == "abc123xyz"
+    assert read_youtube_id(info_json) == "abc123xyz"
     assert not info_json.exists()
