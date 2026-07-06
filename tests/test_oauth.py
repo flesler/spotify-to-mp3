@@ -103,6 +103,34 @@ def test_incremental_sync_stops_at_known_page(oauth):
     mock_get.assert_called_once()
 
 
+def test_incremental_sync_with_limit_keeps_paging(oauth):
+    page1 = {
+        "items": [
+            {"track": {"id": "id1", "type": "track", "name": "A", "artists": [{"name": "X"}], "duration_ms": 1000}},
+            {"track": {"id": "id2", "type": "track", "name": "B", "artists": [{"name": "Y"}], "duration_ms": 2000}},
+        ],
+        "next": "http://example.com/page2",
+    }
+    page2 = {
+        "items": [
+            {"track": {"id": "id_new", "type": "track", "name": "New", "artists": [{"name": "Z"}], "duration_ms": 3000}}
+        ],
+        "next": None,
+    }
+
+    with patch.object(oauth, "authenticate", return_value="token"):
+        with patch("oauth.requests.get") as mock_get:
+            mock_get.side_effect = [
+                MagicMock(json=lambda: page1, raise_for_status=lambda: None),
+                MagicMock(json=lambda: page2, raise_for_status=lambda: None),
+            ]
+            tracks = oauth.get_all_liked_songs(incremental=True, max_tracks=50, downloaded_ids={"id1", "id2"})
+
+    assert len(tracks) == 1
+    assert tracks[0]["id"] == "id_new"
+    assert mock_get.call_count == 2
+
+
 def test_incremental_sync_returns_new_tracks(oauth):
     page1 = {
         "items": [

@@ -695,12 +695,11 @@ def main():
                 print("❌ No tracks found in playlist")
                 sys.exit(1)
 
-        # Apply limit if specified
-        if limit:
-            print(f"📊 Limiting to first {limit} tracks")
+        # Export track list if requested
+        if export_only and limit:
+            print(f"📊 Limiting export to first {limit} tracks")
             tracks = tracks[:limit]
 
-        # Export track list if requested
         if export_only:
             export_file = Path(f"{sanitize_filename(playlist_name)}_tracks.txt")
             with open(export_file, "w", encoding="utf-8") as f:
@@ -750,9 +749,17 @@ def main():
         successful = 0
         failed = 0
         skipped = 0
+        processed = 0
 
-        for i, track in enumerate(tracks, 1):
-            print(f"\n[{i}/{len(tracks)}] {track['artists']} - {track['name']}")
+        if limit:
+            print(f"📊 Limit: {limit} tracks (skips don't count)")
+
+        for track in tracks:
+            if limit and processed >= limit:
+                break
+
+            n = processed + skipped + 1
+            print(f"\n[{n}] {track['artists']} - {track['name']}")
             result = download_track(
                 track,
                 playlist_dir,
@@ -766,7 +773,10 @@ def main():
             )
             if result == "skipped":
                 skipped += 1
-            elif result:
+                continue
+
+            processed += 1
+            if result:
                 successful += 1
             else:
                 failed += 1

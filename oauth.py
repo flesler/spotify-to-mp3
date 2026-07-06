@@ -386,8 +386,11 @@ class OAuth:
                 break
 
             if incremental and on_disk and page_track_ids and all(tid in on_disk for tid in page_track_ids):
-                print("  Reached songs already on disk, stopping early")
-                break
+                if max_tracks and len(new_tracks) < max_tracks:
+                    pass
+                else:
+                    print("  Reached songs already on disk, stopping early")
+                    break
 
             if data["next"]:
                 offset += limit
