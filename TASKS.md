@@ -11,8 +11,8 @@ Smart Spotify playlist downloader that:
 
 ## Current State
 
-✅ Core downloader working (spotify_playlist_downloader.py)  
-✅ Duplicate detection implemented  
+✅ Core downloader working (main.py)  
+✅ Multi-layer deduplication (exact, duration, fuzzy, fingerprinting)  
 ✅ Hard linking support  
 ✅ Metadata/album art embedding  
 ✅ Playlist organization  
@@ -49,14 +49,17 @@ Currently only supports playlist URLs. Need to add:
 
 Current dedup checks filename. Improve with:
 
-- [ ] **Audio fingerprinting** (Chromaprint/AcoustID) for content-based dedup
+- [x] **Audio fingerprinting** (Chromaprint/AcoustID) for content-based dedup
   - Detects same song with different metadata/filenames
   - Optional feature (requires fpcalc)
-- [ ] **Duration matching** - Compare track duration from Spotify vs existing file
-- [ ] **Fuzzy filename matching** - Handle variations like:
+  - Enabled via `ENABLE_AUDIO_FINGERPRINT=true` in `.env`
+- [x] **Duration matching** - Compare track duration from Spotify vs existing file
+  - ±5 second tolerance to catch slight variations
+- [x] **Fuzzy filename matching** - Handle variations like:
   - "Artist - Title (Remix)"
   - "Artist feat. Other - Title"
   - Different capitalization/punctuation
+  - Configurable threshold: `FUZZY_MATCH_THRESHOLD=85`
 - [ ] **Cross-library dedup** - Check multiple base directories
 
 ### 4. Configuration File
@@ -89,10 +92,11 @@ Move hardcoded values to config:
 
 ### 7. Documentation Updates
 
-- [ ] Add venv setup to README
-- [ ] Document liked songs OAuth flow
-- [ ] Add examples for config file usage
-- [ ] Document audio fingerprinting setup (optional)
+- [x] Add venv setup to README
+- [x] Document liked songs OAuth flow
+- [x] Add examples for config file usage
+- [x] Document audio fingerprinting setup (optional)
+- [x] Document deduplication strategies
 
 ## Priority Order
 

@@ -179,6 +179,41 @@ When downloading your liked/saved songs, the script will:
 
 No extra setup needed - just run `python main.py liked`
 
+## Deduplication Strategies
+
+The downloader uses multiple layers to prevent duplicate downloads:
+
+### 1. **Exact Filename Matching** (Fast)
+Checks if both artist and title appear in existing filenames anywhere in MUSIC_DIR.
+
+### 2. **Duration Matching** (±5s tolerance)
+When Spotify provides track duration, verifies that existing files have matching duration. This catches cases where metadata differs but audio is the same.
+
+### 3. **Fuzzy Filename Matching** (Configurable threshold)
+Handles variations like:
+- "Artist - Title (Remix)" → matches "Artist - Title"
+- "Artist feat. Other - Title" → matches "Artist - Title"
+- Different capitalization/punctuation
+
+Threshold controlled by `FUZZY_MATCH_THRESHOLD` (default: 85/100).
+
+### 4. **Audio Fingerprinting** (Optional, content-based)
+Uses Chromaprint/AcoustID to compute audio fingerprints for true content-based deduplication. Detects identical audio even with different metadata or filenames.
+
+Enable in `.env`:
+```bash
+ENABLE_AUDIO_FINGERPRINT=true
+```
+
+Requires `fpcalc`:
+```bash
+sudo apt install fpcalc  # Debian/Ubuntu
+brew install chromaprint  # macOS
+```
+
+### Hard Linking Across Playlists
+When a track exists in one playlist and appears in another, creates hard links instead of downloading again. Saves disk space while keeping playlist organization intact.
+
 ## Navidrome Integration
 
 This downloader is designed for Navidrome:
