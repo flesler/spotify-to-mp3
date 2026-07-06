@@ -19,9 +19,12 @@ ESSENTIA_CPU=0   # 1 = force CPU (e.g. when Whisper holds the GPU)
 Run:
 
 ```bash
-AUDIO_ANALYSIS=1 ./scripts/analyze-library.py          # full library
-AUDIO_ANALYSIS=1 ./scripts/analyze-library.py --force  # re-analyze all
+AUDIO_ANALYSIS=1 ./scripts/analyze-library.py              # full library
+AUDIO_ANALYSIS=1 ./scripts/analyze-library.py ElectroMinita  # one playlist folder
+AUDIO_ANALYSIS=1 ./scripts/analyze-library.py --force      # re-analyze all
 ```
+
+Pass the playlist folder name as the first argument (must match a subfolder under `MUSIC_DIR`).
 
 ## Two model families (important)
 
@@ -58,7 +61,7 @@ Per track:
 |-------|--------|
 | `deam` | Valence/arousal arc (DEAM head v2) |
 | `deam_series` | Downsampled valence/arousal over time |
-| `classifiers` | Binary moods, gender, danceability, voice/instrumental, tonal/atonal — positive class score only (0–1) |
+| `classifiers` | Binary moods, gender, danceability, voice/instrumental, tonal/atonal — `P(positive)` only (see `CLASSIFIER_POSITIVE_CLASS` in `audio_analysis.py`; e.g. `gender: 0.19` → 19% female, 81% male) |
 | `genres` | Top-3 per taxonomy (dortmund, rosamerica, tzanetakis) |
 | `tags` | Top-10 MSD Last.fm-style tags |
 | `features` | BPM, key, loudness, dynamic complexity |

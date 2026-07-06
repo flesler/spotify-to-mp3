@@ -35,6 +35,21 @@ BINARY_HEADS = (
 
 GENRE_HEADS = ("genre_dortmund", "genre_rosamerica", "genre_tzanetakis")
 
+# Flat classifiers[key] = P(positive class). 1.0 - value is the complement (e.g. gender 0.19 → 81% male).
+CLASSIFIER_POSITIVE_CLASS: dict[str, str] = {
+    "mood_happy": "happy",
+    "mood_electronic": "electronic",
+    "mood_relaxed": "relaxed",
+    "mood_aggressive": "aggressive",
+    "mood_sad": "sad",
+    "mood_party": "party",
+    "mood_acoustic": "acoustic",
+    "gender": "female",  # 0.0 = male, 1.0 = female
+    "danceability": "danceable",
+    "voice_instrumental": "voice",  # 0.0 = instrumental, 1.0 = voice
+    "tonal_atonal": "tonal",  # 0.0 = atonal, 1.0 = tonal
+}
+
 _models: "_EssentiaModels | None" = None
 
 
@@ -46,7 +61,13 @@ def essentia_use_cpu() -> bool:
 def _apply_compute_env() -> None:
     if essentia_use_cpu():
         os.environ.setdefault("CUDA_VISIBLE_DEVICES", "-1")
-    os.environ.setdefault("ESSENTIA_LOG_LEVEL", "error")
+
+
+def _silence_essentia_logs() -> None:
+    import essentia
+
+    essentia.log.warningActive = False
+    essentia.log.infoActive = False
 
 
 _apply_compute_env()
@@ -85,6 +106,7 @@ class _EssentiaModels:
     """MusiCNN embedder + classification heads (see docs/essentia.md)."""
 
     def __init__(self) -> None:
+        _silence_essentia_logs()
         from essentia.standard import (  # pyright: ignore[reportAttributeAccessIssue]
             DynamicComplexity,
             KeyExtractor,
@@ -192,15 +214,11 @@ def _head_scores(predictions, labels: list[str]) -> dict[str, float]:
 
 
 def _positive_label(stem: str, labels: list[str]) -> str:
+    if stem in CLASSIFIER_POSITIVE_CLASS:
+        return CLASSIFIER_POSITIVE_CLASS[stem]
     if stem.startswith("mood_"):
         return stem.removeprefix("mood_")
-    known = {
-        "gender": "female",
-        "danceability": "danceable",
-        "voice_instrumental": "voice",
-        "tonal_atonal": "tonal",
-    }
-    return known.get(stem, labels[0])
+    return labels[0]
 
 
 def _binary_positive_score(predictions, stem: str, labels: list[str]) -> float:

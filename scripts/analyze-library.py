@@ -15,10 +15,25 @@ load_dotenv(ROOT / ".env")
 from audio_analysis import analysis_enabled, analyze_library  # noqa: E402
 
 
+def run_one(music_dir: Path, playlist: str | None, *, limit: int | None, force: bool) -> dict:
+    label = playlist or "library"
+    print(f"🎛️  Analyzing {label}…")
+    stats = analyze_library(music_dir, playlist=playlist, limit=limit, force=force)
+    print(
+        f"✅ Done: {stats['analyzed']} analyzed, {stats['skipped']} cached, "
+        f"{stats['linked']} sidecar links, {stats['failed']} failed"
+    )
+    return stats
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Essentia analysis for the music library (host only)")
-    parser.add_argument("playlist", nargs="?", help="Optional playlist folder name (e.g. Rivotril)")
-    parser.add_argument("--limit", type=int, help="Max tracks to analyze (skips don't count)")
+    parser.add_argument(
+        "playlists",
+        nargs="*",
+        help="Optional playlist folder names (e.g. Epic Rivotril); omit for full library",
+    )
+    parser.add_argument("--limit", type=int, help="Max tracks to analyze per run (skips don't count)")
     parser.add_argument("--force", action="store_true", help="Re-analyze even if sidecar exists")
     args = parser.parse_args()
 
@@ -31,14 +46,13 @@ def main() -> int:
         print("MUSIC_DIR not set", file=sys.stderr)
         return 1
 
-    label = args.playlist or "library"
-    print(f"🎛️  Analyzing {label}…")
-    stats = analyze_library(Path(music_dir), playlist=args.playlist, limit=args.limit, force=args.force)
-    print(
-        f"✅ Done: {stats['analyzed']} analyzed, {stats['skipped']} cached, "
-        f"{stats['linked']} sidecar links, {stats['failed']} failed"
-    )
-    return 1 if stats["failed"] else 0
+    music_path = Path(music_dir)
+    targets = args.playlists or [None]
+    failed = 0
+    for playlist in targets:
+        stats = run_one(music_path, playlist, limit=args.limit, force=args.force)
+        failed += stats["failed"]
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
