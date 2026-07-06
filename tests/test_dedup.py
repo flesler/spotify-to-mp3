@@ -85,7 +85,7 @@ class TestCheckIfExists:
         """Test that non-existent track returns None"""
         from main import check_if_track_exists
 
-        result, reason = check_if_track_exists(
+        result = check_if_track_exists(
             artists="Unknown", title="Track", base_music_dir=self.base_path, auto_rename=False
         )
 

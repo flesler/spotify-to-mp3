@@ -4,8 +4,18 @@ Uses client credentials flow (requires Spotify Premium on app owner account).
 """
 
 import base64
+import re
 
 import requests
+
+PLAYLIST_ID_PATTERN = re.compile(r"^[0-9A-Za-z]{22}$")
+
+
+def looks_like_playlist_ref(playlist_input: str) -> bool:
+    """True if input is a Spotify playlist URL or 22-char ID."""
+    if playlist_input.startswith("http"):
+        return "playlist/" in playlist_input
+    return bool(PLAYLIST_ID_PATTERN.match(playlist_input))
 
 
 class API:

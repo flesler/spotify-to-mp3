@@ -412,3 +412,37 @@ class OAuth:
         response.raise_for_status()
 
         return response.json()
+
+    def get_user_playlists(self) -> list[dict]:
+        """List all playlists in the user's library."""
+        access_token = self.authenticate()
+        playlists: list[dict] = []
+        url = "https://api.spotify.com/v1/me/playlists?limit=50"
+
+        while url:
+            headers = {"Authorization": f"Bearer {access_token}"}
+            response = requests.get(url, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+            playlists.extend(data["items"])
+            url = data.get("next")
+
+        return playlists
+
+    def resolve_playlist_by_name(self, name: str) -> tuple[str, str]:
+        """Find a playlist ID by name (case-insensitive, exact match preferred)."""
+        target = name.strip().casefold()
+        playlists = self.get_user_playlists()
+
+        exact = [p for p in playlists if p["name"].casefold() == target]
+        if len(exact) == 1:
+            return exact[0]["id"], exact[0]["name"]
+        if len(exact) > 1:
+            raise ValueError(f"Multiple playlists named {name!r}")
+
+        partial = [p for p in playlists if target in p["name"].casefold()]
+        if len(partial) == 1:
+            return partial[0]["id"], partial[0]["name"]
+
+        names = ", ".join(p["name"] for p in playlists)
+        raise ValueError(f"No playlist matching {name!r}. Your playlists: {names}")

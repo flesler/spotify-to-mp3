@@ -179,3 +179,24 @@ def test_ssh_host_hint_falls_back_to_hostname(monkeypatch):
     monkeypatch.delenv("SSH_CONNECTION", raising=False)
     with patch("oauth.socket.gethostname", return_value="raspberrypi"):
         assert get_ssh_host_hint() == "raspberrypi"
+
+
+def test_resolve_playlist_by_name_exact_match(oauth):
+    playlists = [{"id": "abc123", "name": "Infancia"}, {"id": "def456", "name": "Rivotril"}]
+    with patch.object(oauth, "get_user_playlists", return_value=playlists):
+        playlist_id, name = oauth.resolve_playlist_by_name("infancia")
+    assert playlist_id == "abc123"
+    assert name == "Infancia"
+
+
+def test_resolve_playlist_by_name_partial_match(oauth):
+    playlists = [{"id": "abc123", "name": "My Infancia Mix"}, {"id": "def456", "name": "Rivotril"}]
+    with patch.object(oauth, "get_user_playlists", return_value=playlists):
+        playlist_id, name = oauth.resolve_playlist_by_name("Infancia")
+    assert playlist_id == "abc123"
+
+
+def test_resolve_playlist_by_name_not_found(oauth):
+    with patch.object(oauth, "get_user_playlists", return_value=[{"id": "x", "name": "Other"}]):
+        with pytest.raises(ValueError, match="No playlist matching"):
+            oauth.resolve_playlist_by_name("Missing")

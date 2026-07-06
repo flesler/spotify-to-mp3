@@ -35,7 +35,7 @@ from mutagen.mp3 import MP3
 
 # Import API modules
 # Import API modules
-from api import API
+from api import API, looks_like_playlist_ref
 from library import LibraryIndex, get_txxx
 from oauth import OAuth
 
@@ -64,27 +64,12 @@ DOWNLOAD_QUALITY = os.getenv("DOWNLOAD_QUALITY", "192K")
 # Fuzzy matching threshold (0-100, higher = stricter)
 FUZZY_MATCH_THRESHOLD = 85
 
-
-def ytdlp_cmd() -> list[str]:
-    """Run yt-dlp from this Python environment, not a stale system binary on PATH."""
-    return [sys.executable, "-m", "yt_dlp"]
-
-
-def _ytdlp_error_message(stderr: str) -> str:
-    """Pick the most useful line from yt-dlp stderr (skip deprecation noise)."""
-    lines = [line.strip() for line in stderr.strip().splitlines() if line.strip()]
-    errors = [line for line in lines if line.startswith("ERROR:")]
-    if errors:
-        return errors[-1].removeprefix("ERROR:").strip()
-    for line in lines:
-        if "Deprecated Feature" in line or line.startswith("WARNING:"):
-            continue
-        return line
-    useful = [line for line in lines if "Deprecated Feature" not in line and not line.startswith("WARNING:")]
-    return useful[-1] if useful else "unknown error"
-
-
-def sanitize_filename(filename):
+from ytdlp_util import (
+    download_with_search_fallback,
+    is_rate_limited,
+    ytdlp_cmd,
+    ytdlp_error_message,
+)
     """Remove/replace characters that are problematic for filenames"""
     # Replace problematic characters
     filename = re.sub(r'[<>:"/\\|?*]', "", filename)
@@ -724,6 +709,18 @@ def main():
             print(f"❌ No playlist-id.txt found in {input_path}")
             sys.exit(1)
 
+    is_liked_songs = playlist_input.lower() in ["liked", "saved", "likes"]
+    if not is_liked_songs and not looks_like_playlist_ref(playlist_input):
+        print(f"🔍 Resolving playlist name: {playlist_input}")
+        oauth = OAuth(SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET)
+        try:
+            playlist_id, resolved_name = oauth.resolve_playlist_by_name(playlist_input)
+            print(f"✅ Matched playlist: {resolved_name} ({playlist_id})")
+            playlist_input = playlist_id
+        except Exception as e:
+            print(f"❌ {e}")
+            sys.exit(1)
+
     # Check if yt-dlp is installed (skip in dry-run mode)
     if not dry_run:
         try:
@@ -742,7 +739,6 @@ def main():
 
     try:
         # Check if user wants liked songs
-        is_liked_songs = playlist_input.lower() in ["liked", "saved", "likes"]
         spotify: API | None = None
 
         if is_liked_songs:
