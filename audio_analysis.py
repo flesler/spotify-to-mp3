@@ -59,8 +59,17 @@ def essentia_use_cpu() -> bool:
 
 
 def _apply_compute_env() -> None:
+    os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
     if essentia_use_cpu():
         os.environ.setdefault("CUDA_VISIBLE_DEVICES", "-1")
+        return
+    try:
+        import tensorflow as tf
+
+        for gpu in tf.config.list_physical_devices("GPU"):
+            tf.config.experimental.set_memory_growth(gpu, True)
+    except Exception:
+        pass
 
 
 def _silence_essentia_logs() -> None:
@@ -124,8 +133,11 @@ class _EssentiaModels:
         self.loudness = Loudness()
 
         embed_pb = str(MODELS_DIR / "msd-musicnn-1.pb")
-        self.embed = TensorflowPredictMusiCNN(graphFilename=embed_pb, output="model/dense/BiasAdd")
-        self.msd_tags = TensorflowPredictMusiCNN(graphFilename=embed_pb, output="model/Sigmoid")
+        # batchSize=0 → one TF session per track (batched patches), not per patch
+        self.embed = TensorflowPredictMusiCNN(
+            graphFilename=embed_pb, output="model/dense/BiasAdd", batchSize=0
+        )
+        self.msd_tags = TensorflowPredictMusiCNN(graphFilename=embed_pb, output="model/Sigmoid", batchSize=0)
         self.deam = TensorflowPredict2D(
             graphFilename=str(MODELS_DIR / "deam-msd-musicnn-2.pb"), output="model/Identity"
         )

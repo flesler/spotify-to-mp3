@@ -51,6 +51,11 @@ def print_profile(profile: dict) -> None:
         tag_line = ", ".join(f"{t['label']} ({int(t['frac'] * 100)}%)" for t in tags[:8])
         print(f"\n  tag signature: {tag_line}")
 
+    title_langs = profile.get("title_languages") or []
+    if title_langs:
+        lang_line = ", ".join(f"{t['label']} ({int(t['frac'] * 100)}%)" for t in title_langs)
+        print(f"  title language: {lang_line}")
+
     traits = profile.get("traits") or []
     stable = profile.get("stable_features") or []
     if stable:

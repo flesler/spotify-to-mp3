@@ -20,6 +20,7 @@ from audio_analysis import (
     MODELS_DIR,
     load_cache,
 )
+from title_language import title_language_signature
 
 PROFILE_FILENAME = ".playlist-profile.json"
 PROFILE_VERSION = 2
@@ -662,6 +663,7 @@ def profile_playlist(
     vs_library = library_traits(summary, library, min_z=min_z, max_std=max_std + 0.05) if library else []
     tags = tag_signature(rows, min_frac=tag_min_frac)
     outliers = embedding_outliers(rows)
+    title_langs = title_language_signature([row.name for row in rows], playlist=playlist_dir.name, min_frac=tag_min_frac)
 
     return {
         "profile_version": PROFILE_VERSION,
@@ -677,6 +679,7 @@ def profile_playlist(
         "stable_features": stable,
         "vs_library": vs_library,
         "tags": tags,
+        "title_languages": title_langs,
         "genres_dortmund": _genre_counts(rows),
         "outliers": outliers,
     }
