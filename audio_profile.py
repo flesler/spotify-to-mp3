@@ -648,6 +648,7 @@ def profile_playlist(
     max_std: float = 0.25,
     min_z: float = 1.0,
     tag_min_frac: float = 0.4,
+    force_language: str | None = None,
 ) -> dict[str, Any]:
     rows = load_playlist_tracks(playlist_dir)
     names, matrix = feature_matrix(rows)
@@ -663,7 +664,12 @@ def profile_playlist(
     vs_library = library_traits(summary, library, min_z=min_z, max_std=max_std + 0.05) if library else []
     tags = tag_signature(rows, min_frac=tag_min_frac)
     outliers = embedding_outliers(rows)
-    title_langs = title_language_signature([row.name for row in rows], playlist=playlist_dir.name, min_frac=tag_min_frac)
+    title_langs = title_language_signature(
+        [row.name for row in rows],
+        playlist_dir=playlist_dir,
+        force_language=force_language,
+        min_frac=tag_min_frac,
+    )
 
     return {
         "profile_version": PROFILE_VERSION,

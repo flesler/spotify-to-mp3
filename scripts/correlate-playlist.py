@@ -96,6 +96,11 @@ def main() -> int:
     parser.add_argument("--max-std", type=float, default=0.25, help="Max std for a consistent trait")
     parser.add_argument("--min-z", type=float, default=1.0, help="Min |z| vs library")
     parser.add_argument("--no-save", action="store_true", help="Do not write .playlist-profile.json")
+    parser.add_argument(
+        "--language",
+        metavar="CODE",
+        help="Force title language (overrides playlist-language.txt for this run)",
+    )
     args = parser.parse_args()
 
     music_dir = os.environ.get("MUSIC_DIR")
@@ -116,6 +121,7 @@ def main() -> int:
             min_distance=args.min_distance,
             max_std=args.max_std,
             min_z=args.min_z,
+            force_language=args.language,
         )
         profiles.append(profile)
         print_profile(profile)

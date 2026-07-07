@@ -95,7 +95,7 @@ Old sidecars without `analysis_version: 3` are re-analyzed on the next run.
 
 ## Not implemented (later)
 
-- **Language** — `title_language.py` uses **lingua** for Spanish, Hebrew script in titles, and playlist overrides (`Hebreo`/`Español`).
+- **Language** — `--language` on sync writes `playlist-language.txt`; profiling uses it or infers via lingua + Hebrew script.
 - **Discogs 400/519** — needs `discogs-effnet` embedder, not MusiCNN heads.
 - **Jamendo tags** — separate embedder stack.
 - **Whisper lyrics** — different job, GPU-heavy.

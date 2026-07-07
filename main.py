@@ -39,6 +39,7 @@ from api import API, looks_like_playlist_ref
 from library import LibraryIndex, get_txxx, link_track
 from oauth import OAuth
 from spotify_meta import cache_for_mp3
+from title_language import normalize_language, save_playlist_language
 from ytdlp_util import download_with_search_fallback, is_rate_limited, ytdlp_cmd
 
 # Load environment variables from .env file if it exists
@@ -524,6 +525,7 @@ def process_playlist(
     library_index: LibraryIndex,
     music_dir: Path,
     oauth: OAuth | None = None,
+    language: str | None = None,
 ) -> str:
     """Download one playlist. Returns 'ok', 'empty', or 'error'."""
 
@@ -602,6 +604,10 @@ def process_playlist(
             clean_playlist_id = spotify.extract_playlist_id(playlist_input)
             playlist_id_file.write_text(clean_playlist_id)
             print(f"💾 Saved playlist ID to: {playlist_id_file}")
+
+    if language and not dry_run:
+        lang_path = save_playlist_language(playlist_dir, language)
+        print(f"💾 Saved playlist language to: {lang_path}")
 
     print("🧹 Cleaning up old temporary files...")
     cleanup_count = 0
@@ -736,6 +742,11 @@ def main():
     parser.add_argument(
         "--full", action="store_true", help="Full re-sync for liked songs (fetch entire library instead of incremental)"
     )
+    parser.add_argument(
+        "--language",
+        metavar="CODE",
+        help="Force title language for synced playlist(s) (e.g. es, he); saved as playlist-language.txt",
+    )
 
     args = parser.parse_args()
 
@@ -750,6 +761,12 @@ def main():
     export_only = args.export
     verify_only = args.verify
     full_sync = args.full
+    language = args.language
+    if language:
+        try:
+            language = normalize_language(language)
+        except ValueError as e:
+            parser.error(str(e))
 
     # Handle --verify mode (no playlist needed)
     if verify_only:
@@ -835,6 +852,7 @@ def main():
                 library_index=library_index,
                 music_dir=music_dir,
                 oauth=oauth,
+                language=language,
             )
             if status == "error":
                 failed_playlists.append(playlist_input)
