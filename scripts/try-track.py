@@ -72,6 +72,8 @@ def print_matches(track: dict, matches: list[dict], *, top: int) -> None:
         for miss in (row.get("mismatches") or [])[:2]:
             key = str(miss["key"]).split(".", 1)[-1]
             print(f"         ↳ {key}: song={miss['value']} playlist≈{miss['mean']} (z={miss['z']:+.1f})")
+        for v in (row.get("violations") or [])[:2]:
+            print(f"         ✗ {v['label']}: song={v['value']} playlist≈{v['mean']} (z={v['z']:+.1f})")
 
 
 def ensure_analyzed(mp3: Path) -> None:

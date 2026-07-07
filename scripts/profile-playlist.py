@@ -112,7 +112,8 @@ def main() -> int:
     for genre, n in genre_counts.most_common(20):
         print(f"    {genre}: {n}")
 
-    out = music_dir / f".profile-{playlist}.json"
+    out = music_dir / playlist / ".spotify-profile.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "playlist": playlist,
         "track_count": len(cached),

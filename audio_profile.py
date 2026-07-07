@@ -24,6 +24,7 @@ from audio_analysis import (
 PROFILE_FILENAME = ".playlist-profile.json"
 PROFILE_VERSION = 2
 STD_FLOOR = 0.05
+VIOLATION_Z = 2.0
 
 DEAM_KEYS = ("valence_mean", "arousal_mean", "arousal_peak", "arousal_ramp")
 FEATURE_KEYS = ("bpm", "loudness", "dynamic_complexity")
@@ -473,31 +474,65 @@ def stable_features(
     return stable
 
 
+def _geo_mean(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    arr = np.clip(np.array(values, dtype=float), 1e-9, 1.0)
+    return float(np.exp(np.mean(np.log(arr))))
+
+
 def _feature_fit(
     song: dict[str, float],
     fingerprint: dict[str, dict[str, float]],
     stable_keys: set[str] | None = None,
-) -> tuple[float, list[dict[str, float | str]], int]:
+    *,
+    stable_labels: dict[str, str] | None = None,
+) -> tuple[float, list[dict[str, float | str]], list[dict[str, float | str]], int]:
     overlaps = sorted(set(song) & set(fingerprint))
     if stable_keys is not None:
         overlaps = [k for k in overlaps if k in stable_keys]
     if not overlaps:
-        return 0.0, [], 0
+        return 0.0, [], [], 0
 
-    fits: list[float] = []
+    classifier_fits: list[float] = []
+    signal_fits: list[float] = []
     details: list[dict[str, float | str]] = []
+    violations: list[dict[str, float | str]] = []
+    labels = stable_labels or {}
+
     for key in overlaps:
         mean = float(fingerprint[key]["mean"])
         std = max(float(fingerprint[key]["std"]), STD_FLOOR)
         value = float(song[key])
         z = (value - mean) / std
         fit = float(np.exp(-0.5 * z * z))
-        fits.append(fit)
+        if key.startswith("classifiers."):
+            classifier_fits.append(fit)
+            if abs(z) >= VIOLATION_Z:
+                violations.append(
+                    {
+                        "key": key,
+                        "label": labels.get(key, key.split(".", 1)[-1]),
+                        "value": round(value, 3),
+                        "mean": round(mean, 3),
+                        "z": round(z, 2),
+                    }
+                )
+        else:
+            signal_fits.append(fit)
         if abs(z) >= 1.0:
             details.append({"key": key, "value": round(value, 3), "mean": round(mean, 3), "z": round(z, 2)})
 
+    parts: list[float] = []
+    if classifier_fits:
+        parts.append(_geo_mean(classifier_fits))
+    if signal_fits:
+        parts.append(float(np.mean(signal_fits)))
+    score = float(np.mean(parts)) if parts else 0.0
+
+    violations.sort(key=lambda row: -abs(float(row["z"])))
     details.sort(key=lambda row: -abs(float(row["z"])))
-    return float(np.mean(fits)), details[:6], len(overlaps)
+    return score, details[:6], violations[:4], len(overlaps)
 
 
 def _tag_fit(song_tags: list[str], profile_tags: list[dict[str, Any]]) -> float:
@@ -526,11 +561,14 @@ def match_track_to_playlists(
 ) -> list[dict[str, Any]]:
     matches: list[dict[str, Any]] = []
     for profile in profiles:
-        stable_keys = {str(row["key"]) for row in profile.get("stable_features") or []}
-        feature_score, mismatches, n_stable = _feature_fit(
+        stable_rows = profile.get("stable_features") or []
+        stable_keys = {str(row["key"]) for row in stable_rows}
+        stable_labels = {str(row["key"]): str(row["label"]) for row in stable_rows}
+        feature_score, mismatches, violations, n_stable = _feature_fit(
             track["features"],
             profile.get("fingerprint") or {},
             stable_keys,
+            stable_labels=stable_labels,
         )
         tag_score = _tag_fit(track.get("tags") or [], profile.get("tags") or [])
         timbre = _timbre_fit(track.get("embedding"), profile.get("embedding_centroid"))
@@ -556,6 +594,7 @@ def match_track_to_playlists(
                 "timbre": round(timbre, 3) if timbre is not None else None,
                 "tag_fit": round(tag_score, 3),
                 "mismatches": mismatches,
+                "violations": violations,
                 "track_count": profile.get("track_count", 0),
             }
         )
