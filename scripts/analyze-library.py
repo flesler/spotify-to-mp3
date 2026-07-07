@@ -21,7 +21,7 @@ def run_one(music_dir: Path, playlist: str | None, *, limit: int | None, force: 
     stats = analyze_library(music_dir, playlist=playlist, limit=limit, force=force)
     print(
         f"✅ Done: {stats['analyzed']} analyzed, {stats['skipped']} cached, "
-        f"{stats['linked']} sidecar links, {stats['failed']} failed"
+        f"{stats['skipped_long']} too long, {stats['linked']} sidecar links, {stats['failed']} failed"
     )
     return stats
 

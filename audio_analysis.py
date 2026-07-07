@@ -51,11 +51,48 @@ CLASSIFIER_POSITIVE_CLASS: dict[str, str] = {
 }
 
 _models: "_EssentiaModels | None" = None
+DEFAULT_MAX_ANALYSIS_DURATION_SEC = 300.0
+
+
+class AnalysisSkipped(Exception):
+    """Track intentionally not analyzed (e.g. too long)."""
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(reason)
 
 
 def essentia_use_cpu() -> bool:
     flag = os.environ.get("ESSENTIA_CPU", "0").lower()
     return flag in ("1", "true", "yes")
+
+
+def analysis_max_duration_sec() -> float | None:
+    raw = os.environ.get("ESSENTIA_MAX_DURATION_SEC", "300").strip().lower()
+    if raw in ("0", "none", "off", "no", ""):
+        return None
+    return float(raw)
+
+
+def mp3_duration_sec(mp3: Path) -> float | None:
+    try:
+        from mutagen.mp3 import MP3
+
+        info = MP3(mp3).info
+        if info and info.length:
+            return float(info.length)
+    except Exception:
+        pass
+    return None
+
+
+def _check_analysis_duration(mp3: Path) -> None:
+    max_dur = analysis_max_duration_sec()
+    if max_dur is None:
+        return
+    duration = mp3_duration_sec(mp3)
+    if duration is not None and duration > max_dur:
+        raise AnalysisSkipped(f"{duration:.0f}s > {max_dur:.0f}s max")
 
 
 def _apply_compute_env() -> None:
@@ -337,6 +374,7 @@ def cache_for_mp3(mp3: Path, *, force: bool = False, include_series: bool = True
     if cache_is_fresh(existing) and not force:
         return existing
 
+    _check_analysis_duration(mp3)
     payload = analyze_mp3(mp3, include_series=include_series)
     save_cache(mp3, payload)
     return payload
@@ -426,7 +464,7 @@ def analyze_library(
 
     groups = iter_track_groups(index, playlist=playlist)
     total = len(groups)
-    stats = {"analyzed": 0, "skipped": 0, "linked": 0, "failed": 0}
+    stats = {"analyzed": 0, "skipped": 0, "skipped_long": 0, "linked": 0, "failed": 0}
 
     print(f"📀 {total} unique tracks", flush=True)
     models = _get_models()
@@ -444,10 +482,14 @@ def analyze_library(
                 stats["skipped"] += 1
                 print(f"  [{i}/{total}] skip {primary.name}", flush=True)
             else:
+                _check_analysis_duration(primary)
                 print(f"  [{i}/{total}] analyze {primary.name}", flush=True)
                 cache_for_mp3(primary, force=force, include_series=include_series)
                 stats["analyzed"] += 1
             stats["linked"] += propagate_sidecar(primary, paths)
+        except AnalysisSkipped as e:
+            stats["skipped_long"] += 1
+            print(f"  [{i}/{total}] skip long ({e.reason}): {primary.name}", flush=True)
         except Exception as e:
             stats["failed"] += 1
             print(f"❌ {primary.name}: {e}")

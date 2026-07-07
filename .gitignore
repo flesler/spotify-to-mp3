@@ -34,3 +34,5 @@ Music/
 -e
 tmp/
 models/essentia/
+
+ssd/

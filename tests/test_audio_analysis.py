@@ -7,15 +7,19 @@ import yaml
 
 from audio_analysis import (
     ANALYSIS_VERSION,
+    AnalysisSkipped,
     _arc_profile,
     _binary_positive_score,
+    _check_analysis_duration,
     _head_scores,
     _top_k,
     analysis_enabled,
+    analysis_max_duration_sec,
     analyze_library,
     cache_is_fresh,
     essentia_use_cpu,
     iter_track_groups,
+    mp3_duration_sec,
     propagate_sidecar,
     save_cache,
     sidecar_path,
@@ -163,3 +167,25 @@ def test_analyze_library_limit_skips_dont_count(mock_index_cls, mock_get_models,
     assert stats["analyzed"] == 2
     assert stats["skipped"] == 3
     assert mock_cache.call_count == 2
+
+
+def test_analysis_max_duration_sec_default(monkeypatch):
+    monkeypatch.delenv("ESSENTIA_MAX_DURATION_SEC", raising=False)
+    assert analysis_max_duration_sec() == 300.0
+
+
+def test_check_analysis_duration_skips_long(tmp_path, monkeypatch):
+    monkeypatch.setenv("ESSENTIA_MAX_DURATION_SEC", "300")
+    mp3 = tmp_path / "long.mp3"
+    mp3.write_bytes(b"x")
+    monkeypatch.setattr("audio_analysis.mp3_duration_sec", lambda _p: 301.0)
+    with pytest.raises(AnalysisSkipped, match="301s > 300s"):
+        _check_analysis_duration(mp3)
+
+
+def test_check_analysis_duration_allows_short(tmp_path, monkeypatch):
+    monkeypatch.setenv("ESSENTIA_MAX_DURATION_SEC", "300")
+    mp3 = tmp_path / "short.mp3"
+    mp3.write_bytes(b"x")
+    monkeypatch.setattr("audio_analysis.mp3_duration_sec", lambda _p: 180.0)
+    _check_analysis_duration(mp3)

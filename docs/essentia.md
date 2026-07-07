@@ -92,6 +92,7 @@ Old sidecars without `analysis_version: 3` are re-analyzed on the next run.
 - Heads architecture: much lower VRAM; fits alongside other GPU workloads more easily.
 - Two Python processes both using the GPU will OOM even if each alone fits.
 - `ESSENTIA_CPU=1` forces CPU when the GPU is busy.
+- Tracks longer than **5 minutes** are skipped (`ESSENTIA_MAX_DURATION_SEC=300`, set `0` to disable).
 
 ## Not implemented (later)
 

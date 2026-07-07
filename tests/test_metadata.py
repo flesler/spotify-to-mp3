@@ -50,6 +50,15 @@ def test_set_mp3_metadata_writes_spotify_and_youtube_ids(tagged_mp3):
     assert tags.getall("WOAS")[0].url == "https://www.youtube.com/watch?v=youtubeVid456"
 
 
+def test_track_too_long_for_download():
+    from main import MAX_DOWNLOAD_DURATION_SEC, track_too_long_for_download
+
+    max_ms = MAX_DOWNLOAD_DURATION_SEC * 1000
+    assert not track_too_long_for_download({"duration_ms": max_ms})
+    assert track_too_long_for_download({"duration_ms": max_ms + 1})
+    assert not track_too_long_for_download({})
+
+
 def test_read_youtube_id_deletes_sidecar(tmp_path):
     from ytdlp_util import read_youtube_id
 

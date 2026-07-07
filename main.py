@@ -67,6 +67,22 @@ DOWNLOAD_QUALITY = os.getenv("DOWNLOAD_QUALITY", "192K")
 # Fuzzy matching threshold (0-100, higher = stricter)
 FUZZY_MATCH_THRESHOLD = 85
 
+# Skip downloading tracks longer than this (Spotify duration_ms)
+MAX_DOWNLOAD_DURATION_SEC = 8 * 60
+
+
+def track_too_long_for_download(track: dict) -> bool:
+    duration_ms = track.get("duration_ms")
+    if not duration_ms:
+        return False
+    return duration_ms > MAX_DOWNLOAD_DURATION_SEC * 1000
+
+
+def _format_duration_ms(duration_ms: int) -> str:
+    total_sec = duration_ms // 1000
+    minutes, seconds = divmod(total_sec, 60)
+    return f"{minutes}:{seconds:02d}"
+
 
 def sanitize_filename(filename):
     """Remove/replace characters that are problematic for filenames"""
@@ -471,6 +487,15 @@ def download_track(
         elif fix_metadata and dry_run:
             print("   🎨 Would fix metadata")
 
+        return "skipped"
+
+    if track_too_long_for_download(track):
+        duration_ms = track["duration_ms"]
+        max_min = MAX_DOWNLOAD_DURATION_SEC // 60
+        print(
+            f"⏭️  Skipped (too long: {_format_duration_ms(duration_ms)}, max {max_min}m): "
+            f"{sanitized_filename}.mp3"
+        )
         return "skipped"
 
     if dry_run:
