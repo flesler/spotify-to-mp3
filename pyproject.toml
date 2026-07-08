@@ -1,5 +1,17 @@
 [tool.basedpyright]
 typeCheckingMode = "basic"
+exclude = [
+    "**/ssd",
+    "**/.cursor",
+    "**/node_modules",
+    "**/.venv",
+    "**/venv",
+    "**/__pycache__",
+    "**/dist",
+    "**/build",
+    "**/.git"
+]
+
 reportMissingParameterType = "none"
 reportUnknownParameterType = "none"
 reportUnknownVariableType = "none"
