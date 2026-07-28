@@ -99,7 +99,7 @@ Old sidecars without `analysis_version: 3` are re-analyzed on the next run.
 - **Language** — `--language` on sync writes `playlist-language.txt`; profiling uses it or infers via lingua + Hebrew script.
 - **Discogs 400/519** — needs `discogs-effnet` embedder, not MusiCNN heads.
 - **Jamendo tags** — separate embedder stack.
-- **Whisper lyrics** — different job, GPU-heavy.
+- **Lyrics** — see [lyrics.md](lyrics.md) (LRCLIB fetch; GPU transcription later).
 
 ## References
 

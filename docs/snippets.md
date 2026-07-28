@@ -11,6 +11,7 @@ MUSIC_DIR=/path/to/Music
 
 AUDIO_ANALYSIS=1      # host only — Essentia sidecars
 ESSENTIA_CPU=0        # 1 = CPU when GPU is busy
+LYRICS_FETCH=1        # host only — LRCLIB lyrics sidecars (no GPU)
 DOWNLOAD_QUALITY=192K
 ```
 
@@ -52,6 +53,23 @@ Liked songs (incremental — skips already on disk):
 ./scripts/run.sh liked --full                # re-fetch entire library
 ```
 
+**Pi disk** — mount SSD first, then point `MUSIC_DIR` at the mount:
+
+```bash
+~/Code/pi/.cursor/skills/pi/scripts/sshfs.sh mount   # → ~/Code/pi/ssd
+MUSIC_DIR=~/Code/pi/ssd/Music ./scripts/run.sh liked --dry-run --full
+~/Code/pi/.cursor/skills/pi/scripts/sshfs.sh unmount
+```
+
+**Run on Pi directly** (repo at `/mnt/ssd/hermes/workspace/Code/spotify-to-mp3`, `MUSIC_DIR=/mnt/ssd/Music`):
+
+```bash
+~/Code/pi/.cursor/skills/pi/scripts/pi.sh 'cd /mnt/ssd/hermes/workspace/Code/spotify-to-mp3 && git pull && nohup ./scripts/run.sh liked --full > /tmp/liked-download.log 2>&1 &'
+ssh pi@pi.local 'tail -f /tmp/liked-download.log'   # monitor
+```
+
+Use `--full` when missing tracks are scattered (incremental stops at first fully-on-disk page).
+
 Dry run / export:
 
 ```bash
@@ -74,6 +92,27 @@ Download only (no analyze/match):
 ```bash
 ./scripts/download-track.py 4y6VbDYN3kYSDZkbOim5US
 ```
+
+---
+
+## Lyrics (LRCLIB)
+
+Writes `Artist - Title.lrc` (synced) or `.txt` (plain) next to each MP3. Skips when sidecar exists or MP3 has `TXXX:LYRICS_LRCLIB=nomatch`. No GPU.
+
+```bash
+LYRICS_FETCH=1 ./scripts/fetch-lyrics.py
+LYRICS_FETCH=1 ./scripts/fetch-lyrics.py "Sing Along" Epic
+LYRICS_FETCH=1 ./scripts/fetch-lyrics.py "Sing Along/Artist - Title.mp3"
+LYRICS_FETCH=1 ./scripts/fetch-lyrics.py --force   # retry misses
+```
+
+Pi over SSHFS while Essentia uses the GPU:
+
+```bash
+MUSIC_DIR=~/Code/pi/ssd/Music LYRICS_FETCH=1 ./scripts/fetch-lyrics.py
+```
+
+More detail: [lyrics.md](lyrics.md)
 
 ---
 
@@ -164,6 +203,7 @@ AUDIO_ANALYSIS=1 ./scripts/analyze-audio.py "Liked Songs/Artist - Title.mp3"
 | File | Location | Purpose |
 |------|----------|---------|
 | `*.audio.yaml` | next to MP3 | Essentia analysis (`analysis_version: 3`) |
+| `*.lrc` / `*.txt` | next to MP3 | Lyrics (LRCLIB; `.lrc` preferred when synced) |
 | `.playlist-profile.json` | inside playlist folder | Cached means, stable dims, tags, centroid |
 | `*.spotify.yaml` | next to MP3 | Spotify API metadata (optional) |
 | `playlist-id.txt` | inside playlist folder | Spotify playlist ID for re-crawl |
