@@ -44,10 +44,6 @@ def txt_sidecar_path(mp3: Path) -> Path:
     return mp3.with_suffix(SIDECAR_TXT)
 
 
-def acestep_sidecar_path(mp3: Path) -> Path:
-    return mp3.with_name(mp3.stem + ".lyrics.txt")
-
-
 def has_lyrics_sidecar(mp3: Path) -> bool:
     return lrc_sidecar_path(mp3).exists() or txt_sidecar_path(mp3).exists()
 
@@ -403,3 +399,4 @@ def fetch_lyrics(
 
 # Back-compat alias
 fetch_lyrics_library = fetch_lyrics
+

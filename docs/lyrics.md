@@ -82,6 +82,8 @@ cp "Artist - Title.txt" "Artist - Title.lyrics.txt"
 
 `lyrics.lrc_to_plain()` in `lyrics.py` does the LRC strip if you need it in Python.
 
+For ACE-Step training export (`.lrc` → flat `song.lyrics.txt` dataset), see `colabs/projects/ace-step/scripts/export_lyrics.py`.
+
 Structural tags (`[Verse]`, `[Chorus]`) are optional for ACE-Step — add manually or via a future transcription pass.
 
 ---

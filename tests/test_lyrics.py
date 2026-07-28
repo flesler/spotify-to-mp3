@@ -157,3 +157,8 @@ def test_fetch_lrclib_search_fallback():
     )
     assert result["plainLyrics"] == "right"
     assert session.get.call_count == 2
+
+
+def test_plain_lyrics_from_lrc_via_helper():
+    lrc = "[00:01.00]Hello\n[00:02.00]World\n"
+    assert lrc_to_plain(lrc) == "Hello\nWorld"
