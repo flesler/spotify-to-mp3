@@ -8,6 +8,9 @@ import sys
 from pathlib import Path
 
 SEARCH_RESULT_LIMIT = int(os.getenv("YTDLP_SEARCH_LIMIT", "5"))
+# Navidrome bar: reject clearly wrong rips (wrong video, live when studio expected, etc.).
+# Live cuts / video outros within ~60s are OK. Stricter training filter lives in ace-step.
+DEFAULT_DURATION_TOLERANCE_SEC = float(os.getenv("YTDLP_DURATION_TOLERANCE_SEC", "60"))
 
 
 def ytdlp_cmd() -> list[str]:
@@ -22,6 +25,10 @@ def js_runtime_args() -> list[str]:
     if shutil.which("deno"):
         return ["--js-runtimes", "deno"]
     return []
+
+
+def duration_tolerance_sec() -> float:
+    return DEFAULT_DURATION_TOLERANCE_SEC
 
 
 def ytdlp_base_args(quality: str) -> list[str]:
@@ -73,14 +80,39 @@ def is_rate_limited(error_msg: str) -> bool:
     return any(indicator in error_msg for indicator in indicators)
 
 
-def search_youtube_videos(query: str, limit: int = SEARCH_RESULT_LIMIT) -> list[tuple[str, str]]:
-    """Return [(video_id, title), ...] from YouTube search."""
+def mp3_duration_sec(path: Path) -> float | None:
+    try:
+        from mutagen.mp3 import MP3
+
+        return float(MP3(path).info.length)
+    except Exception:
+        return None
+
+
+def duration_drift_sec(actual_sec: float | None, target_ms: int | None) -> float | None:
+    if actual_sec is None or not target_ms:
+        return None
+    return abs(actual_sec - target_ms / 1000.0)
+
+
+def duration_acceptable(path: Path, target_ms: int | None, tolerance_sec: float | None = None) -> bool:
+    if not target_ms:
+        return True
+    tol = duration_tolerance_sec() if tolerance_sec is None else tolerance_sec
+    drift = duration_drift_sec(mp3_duration_sec(path), target_ms)
+    return drift is None or drift <= tol
+
+
+def search_youtube_videos(
+    query: str, limit: int = SEARCH_RESULT_LIMIT
+) -> list[tuple[str, str, float | None]]:
+    """Return [(video_id, title, duration_sec), ...] from YouTube search."""
     cmd = [
         *ytdlp_cmd(),
         f"ytsearch{limit}:{query}",
         "--flat-playlist",
         "--print",
-        "%(id)s|||%(title)s",
+        "%(id)s|||%(title)s|||%(duration)s",
         "--no-warnings",
         *js_runtime_args(),
     ]
@@ -88,15 +120,43 @@ def search_youtube_videos(query: str, limit: int = SEARCH_RESULT_LIMIT) -> list[
     if result.returncode != 0:
         return []
 
-    candidates: list[tuple[str, str]] = []
+    candidates: list[tuple[str, str, float | None]] = []
     for line in result.stdout.splitlines():
         line = line.strip()
         if "|||" not in line:
             continue
-        video_id, title = line.split("|||", 1)
+        parts = line.split("|||", 2)
+        if len(parts) < 2:
+            continue
+        video_id, title = parts[0], parts[1]
+        duration: float | None = None
+        if len(parts) == 3 and parts[2] not in ("", "NA", "None"):
+            try:
+                duration = float(parts[2])
+            except ValueError:
+                duration = None
         if video_id:
-            candidates.append((video_id, title))
+            candidates.append((video_id, title, duration))
     return candidates
+
+
+def rank_candidates_by_duration(
+    candidates: list[tuple[str, str, float | None]],
+    target_ms: int | None,
+) -> list[tuple[str, str, float | None]]:
+    if not target_ms:
+        return candidates
+
+    target_sec = target_ms / 1000.0
+    tol = duration_tolerance_sec()
+
+    def sort_key(item: tuple[str, str, float | None]) -> tuple[int, float]:
+        _vid, _title, duration = item
+        if duration is None:
+            return (1, tol + 1.0)
+        return (0, abs(duration - target_sec))
+
+    return sorted(candidates, key=sort_key)
 
 
 def download_youtube_video(video_id: str, output_template: str, quality: str) -> subprocess.CompletedProcess:
@@ -137,26 +197,56 @@ def cleanup_partial_downloads(playlist_dir: Path, sanitized_filename: str):
 
 
 def download_with_search_fallback(
-    search_query: str, playlist_dir: Path, sanitized_filename: str, quality: str
+    search_query: str,
+    playlist_dir: Path,
+    sanitized_filename: str,
+    quality: str,
+    *,
+    target_duration_ms: int | None = None,
+    tolerance_sec: float | None = None,
 ) -> tuple[bool, str | None, str]:
-    """Try up to SEARCH_RESULT_LIMIT YouTube search results. Returns (ok, youtube_id, error)."""
+    """Try YouTube search results; reject rips that are clearly the wrong song.
+
+    Candidates are ranked by duration proximity to Spotify. After download, reject
+    when drift exceeds tolerance (default 60s — wrong video / wrong version).
+    ACE-Step training applies a separate stricter filter in the colabs repo.
+    """
     output_template = str(playlist_dir) + "/" + sanitized_filename + ".%(ext)s"
     info_json = playlist_dir / f"{sanitized_filename}.info.json"
     candidates = search_youtube_videos(search_query)
+    candidates = rank_candidates_by_duration(candidates, target_duration_ms)
 
     if not candidates:
         return False, None, "no YouTube search results"
 
+    tol = tolerance_sec if tolerance_sec is not None else duration_tolerance_sec()
     last_error = "unknown error"
-    for i, (video_id, title) in enumerate(candidates, 1):
+    for i, (video_id, title, search_duration) in enumerate(candidates, 1):
         if i > 1:
-            print(f"   ↪ Trying result {i}/{len(candidates)}: {title}")
+            hint = ""
+            if search_duration is not None and target_duration_ms:
+                hint = f" ({int(search_duration)}s vs spotify {target_duration_ms // 1000}s)"
+            print(f"   ↪ Trying result {i}/{len(candidates)}: {title}{hint}")
 
         cleanup_partial_downloads(playlist_dir, sanitized_filename)
         result = download_youtube_video(video_id, output_template, quality)
 
         output_path = playlist_dir / f"{sanitized_filename}.mp3"
         if result.returncode == 0 and output_path.exists():
+            drift = duration_drift_sec(mp3_duration_sec(output_path), target_duration_ms)
+            if drift is not None and drift > tol:
+                print(
+                    f"   ✗ Rejected duration drift {drift:.0f}s "
+                    f"(spotify {target_duration_ms // 1000}s, got {mp3_duration_sec(output_path):.0f}s)"
+                )
+                try:
+                    output_path.unlink()
+                except OSError:
+                    pass
+                cleanup_partial_downloads(playlist_dir, sanitized_filename)
+                last_error = f"duration drift {drift:.0f}s exceeds {tol:.0f}s tolerance"
+                continue
+
             youtube_id = read_youtube_id(info_json) or video_id
             return True, youtube_id, ""
 

@@ -2,7 +2,6 @@
 """Spotify track ID → index lookup → download if missing → analyze → playlist match."""
 
 import os
-import re
 import sys
 from pathlib import Path
 
@@ -21,30 +20,7 @@ from audio_profile import (  # noqa: E402
 )
 from library import LibraryIndex  # noqa: E402
 from main import download_track, sanitize_filename  # noqa: E402
-
-TRACK_ID_RE = re.compile(r"(?:^|track[/:])([0-9A-Za-z]{22})")
-
-
-def parse_track_id(raw: str) -> str:
-    raw = raw.strip()
-    match = TRACK_ID_RE.search(raw)
-    if match:
-        return match.group(1)
-    if re.fullmatch(r"[0-9A-Za-z]{22}", raw):
-        return raw
-    raise SystemExit(f"Not a Spotify track ID or URL: {raw}")
-
-
-def fetch_track(api: API, track_id: str) -> dict:
-    data = api._make_request(f"https://api.spotify.com/v1/tracks/{track_id}")
-    return {
-        "id": data["id"],
-        "name": data["name"],
-        "artists": ", ".join(artist["name"] for artist in data["artists"]),
-        "duration_ms": data["duration_ms"],
-        "popularity": data.get("popularity", 0),
-        "album": data.get("album", {}),
-    }
+from track_util import fetch_track, parse_track_id  # noqa: E402
 
 
 def print_matches(track: dict, matches: list[dict], *, top: int) -> None:

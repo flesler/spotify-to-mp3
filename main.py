@@ -392,6 +392,7 @@ def download_track(
     auto_link=True,
     fix_metadata=True,
     library_index: LibraryIndex | None = None,
+    force_redownload: bool = False,
 ):
     """Download a single track using yt-dlp"""
     artists = track["artists"]
@@ -402,15 +403,19 @@ def download_track(
     sanitized_filename = sanitize_filename(f"{artists} - {title}")
 
     # Check if file already exists anywhere
-    match = check_if_track_exists(
-        artists,
-        title,
-        base_music_dir,
-        auto_rename,
-        track.get("duration_ms"),
-        spotify_id=track.get("id"),
-        library_index=library_index,
-    )
+    if not force_redownload:
+        match = check_if_track_exists(
+            artists,
+            title,
+            base_music_dir,
+            auto_rename,
+            track.get("duration_ms"),
+            spotify_id=track.get("id"),
+            library_index=library_index,
+        )
+    else:
+        match = None
+
     if match:
         existing_file, match_reason = match
         rel_path = existing_file.relative_to(base_music_dir)
@@ -478,7 +483,7 @@ def download_track(
 
     # Check if file exists in the target playlist directory
     output_path = Path(playlist_dir) / f"{sanitized_filename}.mp3"
-    if output_path.exists():
+    if output_path.exists() and not force_redownload:
         print(f"⏭️  Skipped (in playlist dir): {sanitized_filename}.mp3")
 
         # Fix metadata if needed
@@ -504,9 +509,17 @@ def download_track(
 
     print(f"🔍 Searching: {search_query}")
 
+    if force_redownload and output_path.exists():
+        print(f"   🗑️  Removing existing rip for re-download")
+        output_path.unlink()
+
     try:
         ok, youtube_id, error_msg = download_with_search_fallback(
-            search_query, Path(playlist_dir), sanitized_filename, DOWNLOAD_QUALITY
+            search_query,
+            Path(playlist_dir),
+            sanitized_filename,
+            DOWNLOAD_QUALITY,
+            target_duration_ms=track.get("duration_ms"),
         )
 
         if ok:

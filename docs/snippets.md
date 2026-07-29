@@ -91,7 +91,12 @@ Download only (no analyze/match):
 
 ```bash
 ./scripts/download-track.py 4y6VbDYN3kYSDZkbOim5US
+./scripts/download-track.py <spotify_id> --playlist ElectroMinita --force   # replace bad rip
 ```
+
+YouTube rips are ranked by duration vs Spotify; downloads with **>60s drift** are rejected
+(`YTDLP_DURATION_TOLERANCE_SEC`, default 60). Catches wrong videos; allows live/video cuts.
+LoRA training uses a stricter filter in the colabs `ace-step` project.
 
 ---
 
