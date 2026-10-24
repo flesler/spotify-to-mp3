@@ -1,0 +1,56 @@
+# Human-owned playlist intents for System One choice criteria.
+# Overlap is intentional — same track may belong to several folders (symlinks in the library).
+# Profile digests append at runtime from {folder}/.playlist-profile.json.
+# For Liked Songs: prefer multi-pick via probability/score thresholds, not a single winner.
+
+playlists:
+  - id: Epic
+    intent: |
+      Heavy, adrenaline, cinematic scale — trailer and movie-adjacent energy, big builds,
+      orchestral or electronic weight. Makes you feel pumped or vast; not required to be
+      a literal soundtrack. Often instrumental-forward.
+      Overlaps: can share tracks with Pila (intensity) or The Feels (big emotional moments).
+      Not: slow antidepressant lift (Rivotril), pure chill (Tranca), or cute house vocal (ElectroMinita).
+
+  - id: Rivotril
+    intent: |
+      Antidepressant arc — starts slow and low, then builds gently into something you can
+      tolerate when you are down: gradually more cheerful or upbeat, but never too high or manic.
+      Emotional safety first; lift without spikes.
+      Overlaps: Tranca also starts calm (Tranca stays flatter); The Feels if lyrical and sad-beautiful.
+      Not: already-loud upbeat stacks (Pila), epic bombast (Epic), or peak-time dance (ElectroMinita).
+
+  - id: The Feels
+    intent: |
+      Emotional music — shower-sing, heart on sleeve, bittersweet or tender. Lyrics and melody
+      carry the feeling. More “feel it” than “vibe in the background.”
+      Overlaps: Sing Along (more participatory belting); Rivotril if slow lift; Oldies if nostalgic ballad.
+      Not: instrumental epic (Epic), flat chill loop (Tranca), or high-pitch house bangers (ElectroMinita).
+
+  - id: Tranca
+    intent: |
+      Chill-out — like Rivotril at the start (soft, low) but does not climb much; stays relaxed
+      and steady. Background calm, not a journey upward.
+      Overlaps: Rivotril (low start); Oldies for easy listening.
+      Not: sustained high energy (Pila), cinematic adrenaline (Epic), or emotional catharsis (The Feels).
+
+  - id: Pila
+    intent: |
+      Upbeat from the first bar and stays there — starts high, remains high. Energetic and bright;
+      not necessarily extreme loudness or EDM aggression. Momentum without needing a slow intro.
+      Overlaps: Epic (intensity), ElectroMinita (dance pop), Oldies (upbeat classics).
+      Not: slow antidepressant build (Rivotril), flat chill (Tranca).
+
+  - id: ElectroMinita
+    intent: |
+      Electronic dance — house, dance, synths; usually women singing, often higher register.
+      Club-adjacent and rhythmic; femme vocal + production forward.
+      Overlaps: Pila (upbeat dance), Tranca (some electronic chill).
+      Not: acoustic oldies, slow ballad feels, or orchestral epic.
+
+  - id: Oldies
+    intent: |
+      Music from the 1980s and 1990s (release year is a strong signal). Familiar hooks, classic
+      pop and rock comfort; easy to place with decade metadata when available.
+      Overlaps: The Feels, Pila, Tranca depending on tempo and mood.
+      Not: primarily 2000s+ hyperpop unless it genuinely reads as retro comfort.
