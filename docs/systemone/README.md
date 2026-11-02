@@ -52,5 +52,25 @@ One GGUF loaded at a time on `:58261`; don’t leave `mmproj` on d3 presets (VRA
 
 - Fix Choice `none` rate on small samples before any new A/B.
 - Tune Noul thresholds or try **isolated** Noul (one playlist per request; slower locally).
-- d1-omni only after llama.cpp supports audio `files` on systemone.
 - Liked Songs: multi-assign above threshold, not single winner.
+
+---
+
+## LFM3-Audio-2B-GGUF (Nov 2026 — rejected)
+
+[LiquidAI/LFM3-Audio-2B-GGUF](https://huggingface.co/LiquidAI/LFM3-Audio-2B-GGUF) was tested as a **cold MP3** path (chat API, 16 kHz clip, rubrics in system prompt, no title). We upgraded llama.cpp to **0.8.0-dev (build 1443)** for it; **weights and eval scripts were removed** after the run — only this write-up remains.
+
+**Setup (historical):** main GGUF + **mmproj** on `:58261`; 40 s clips from Pi `/mnt/ssd/Music` via SSH/ffmpeg.
+
+**Eval (2026-11-02):** stratified **7 × 7 mood folders** (seed 42, **n=49**), weak oracle = parent folder. Math used existing `.audio.yaml` + cached profiles (still requires `analyze-audio`, not ID3/Spotify).
+
+| Method | Input | Top-1 |
+|--------|--------|-------|
+| Math full | Essentia sidecar (features + timbre + tags) | **63.3%** |
+| Math no tags | Same, tags zeroed | **63.3%** |
+| Math features-only | No tags, no embedding timbre | **49.0%** |
+| LFM3-Audio cold | MP3 clip only | **14.3%** (22.4% if truth anywhere in model’s list) |
+
+**Verdict:** **Do not adopt.** LFM3 collapsed to labeling most clips **Epic** (7/7 Epic correct, ~0/7 on other folders). Not “slightly worse” than math — far below even features-only Essentia (~49%). Tags in the sidecar did not move math on this slice; timbre did.
+
+**Also skipped:** [LFM3-Omni-2B-GGUF](https://huggingface.co/LiquidAI/LFM3-Omni-2B-GGUF) — no point after Audio-only failure at 2B.
